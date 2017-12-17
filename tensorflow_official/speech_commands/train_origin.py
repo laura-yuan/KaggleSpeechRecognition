@@ -154,10 +154,8 @@ def main(_):
   with tf.name_scope('train'), tf.control_dependencies(control_dependencies):
     learning_rate_input = tf.placeholder(
         tf.float32, [], name='learning_rate_input')
-#    train_step = tf.train.GradientDescentOptimizer(
-#        learning_rate_input).minimize(cross_entropy_mean)
-    train_step = tf.train.AdamOptimizer(
-       learning_rate_input).minimize(cross_entropy_mean)
+    train_step = tf.train.GradientDescentOptimizer(
+        learning_rate_input).minimize(cross_entropy_mean)
   predicted_indices = tf.argmax(logits, 1)
   correct_prediction = tf.equal(predicted_indices, ground_truth_input)
   confusion_matrix = tf.confusion_matrix(
@@ -377,7 +375,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--how_many_training_steps',
       type=str,
-      default='1500,300',
+      default='15000,3000',
       help='How many training loops to run',)
   parser.add_argument(
       '--eval_step_interval',
