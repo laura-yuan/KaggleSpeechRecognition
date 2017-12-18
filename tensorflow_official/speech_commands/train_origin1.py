@@ -150,8 +150,7 @@ def main(_):
   with tf.name_scope('cross_entropy'):
     cross_entropy_mean = tf.losses.sparse_softmax_cross_entropy(
         labels=ground_truth_input, logits=logits)
-
-  
+  tf.summary.scalar('cross_entropy', cross_entropy_mean)
   with tf.name_scope('train'), tf.control_dependencies(control_dependencies):
     learning_rate_input = tf.placeholder(
         tf.float32, [], name='learning_rate_input')
@@ -164,8 +163,7 @@ def main(_):
   confusion_matrix = tf.confusion_matrix(
       ground_truth_input, predicted_indices, num_classes=label_count)
   evaluation_step = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-    
-
+  tf.summary.scalar('accuracy', evaluation_step)
 
   global_step = tf.train.get_or_create_global_step()
   increment_global_step = tf.assign(global_step, global_step + 1)
@@ -173,18 +171,11 @@ def main(_):
   saver = tf.train.Saver(tf.global_variables())
 
   # Merge all the summaries and write them out to /tmp/retrain_logs (by default)
-    
-  # training result.
-  tf.summary.scalar('cross_entropy', cross_entropy_mean)
-  tf.summary.scalar('accuracy', evaluation_step)
-  confusion_matrix_save = tf.expand_dims(tf.expand_dims(tf.cast(confusion_matrix, tf.float32), 0), 3)
-  tf.summary.image('confusion_matrix', confusion_matrix_save)
-
   merged_summaries = tf.summary.merge_all()
   train_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/train',
                                        sess.graph)
   validation_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/validation')
-  test_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/test')
+
   tf.global_variables_initializer().run()
 
   start_step = 1
@@ -236,9 +227,6 @@ def main(_):
                     (training_step, learning_rate_value, train_accuracy * 100,
                      cross_entropy_value))
     is_last_step = (training_step == training_steps_max)
-    
-    
-    ## validation. inside of training loop
     if (training_step % FLAGS.eval_step_interval) == 0 or is_last_step:
       set_size = audio_processor.set_size('validation')
       total_accuracy = 0
@@ -282,22 +270,19 @@ def main(_):
   for i in xrange(0, set_size, FLAGS.batch_size):
     test_fingerprints, test_ground_truth = audio_processor.get_data(
         FLAGS.batch_size, i, model_settings, 0.0, 0.0, 0, 'testing', sess)
-        
-    test_summary, test_accuracy, conf_matrix = sess.run(
-        [merged_summaries, evaluation_step, confusion_matrix],
+    test_accuracy, conf_matrix = sess.run(
+        [evaluation_step, confusion_matrix],
         feed_dict={
             fingerprint_input: test_fingerprints,
             ground_truth_input: test_ground_truth,
             dropout_prob: 1.0
         })
-    test_writer.add_summary(test_summary, training_step)
     batch_size = min(FLAGS.batch_size, set_size - i)
     total_accuracy += (test_accuracy * batch_size) / set_size
     if total_conf_matrix is None:
       total_conf_matrix = conf_matrix
     else:
       total_conf_matrix += conf_matrix
-    
   tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
   tf.logging.info('Final test accuracy = %.1f%% (N=%d)' % (total_accuracy * 100,
                                                            set_size))
