@@ -93,6 +93,8 @@ def run_graph(wav_file_list, labels, input_layer_name, output_layer_name,
          
         labels_of_wav[ii] =  label_this_wav
         ii += 1
+        if ii%1000 == 0:
+            print(str(ii) + 'has been calculated')
     return labels_of_wav
 
 

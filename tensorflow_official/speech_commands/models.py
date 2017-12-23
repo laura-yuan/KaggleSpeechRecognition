@@ -23,7 +23,6 @@ import math
 
 import tensorflow as tf
 
-
 def prepare_model_settings(label_count, sample_rate, clip_duration_ms,
                            window_size_ms, window_stride_ms,
                            dct_coefficient_count):
@@ -100,6 +99,8 @@ def create_model(fingerprint_input, model_settings, model_architecture,
                                   is_training)
   elif model_architecture == 'conv':
     return create_conv_model(fingerprint_input, model_settings, is_training)
+  elif model_architecture == 'conv_deep':
+    return create_model_conv_deep(fingerprint_input, model_settings, is_training)
   elif model_architecture == 'low_latency_conv':
     return create_low_latency_conv_model(fingerprint_input, model_settings,
                                          is_training)
@@ -564,3 +565,121 @@ def create_low_latency_svdf_model(fingerprint_input, model_settings,
     return final_fc, dropout_prob
   else:
     return final_fc
+
+def conv_layer(X, f, strides, layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False):
+    """
+    Reusable code for making a simple neural net layer.
+    It does a matrix multiply, bias add, and then uses relu to nonlinearize.
+    It also sets up name scoping so that the resultant graph is easy to read,
+    and adds a number of summary ops.
+
+    Arguments:
+    X -- input tensor of shape (m, n_H_prev, n_W_prev, n_C_prev)
+    f -- integer, specifying the shape of the middle CONV's window [20, 8, 1, 64]
+    block -- string/character, used to name the layers, depending on their position in the network
+    
+    Returns:
+    Y -- output of the identity block, tensor of shape (n_H, n_W, n_C)
+
+    """
+    with tf.variable_scope(layer_name):
+        W = tf.get_variable('weight', f, initializer= tf.contrib.layers.xavier_initializer())
+        B = tf.get_variable('bias', f[3], initializer= tf.zeros_initializer())
+        Z = tf.nn.conv2d(X, W, strides = strides, padding = 'VALID', use_cudnn_on_gpu = use_cudnn_on_gpu, name = 'preactivation') + B
+        A = act(Z, name = 'activation')
+        
+#     variable_summaries(W, 'weight')
+#     variable_summaries(B, 'bias')
+#     variable_summaries(Z,'preactivation')
+#     variable_summaries(A,'activation')
+        
+    return A
+    
+def create_model_conv_deep(fingerprint_input, model_settings, is_training):
+#         parameters = model_settings['parameter']
+
+    parameters = {}
+    parameters['W1'] = [28, 8, 1, 64]
+    parameters['F_strides1'] = [1,1,1,1]
+    parameters['M1'] = [1, 2, 2, 1]
+    parameters['M_strides1'] = [1, 2, 2, 1]
+
+    
+    parameters['W2'] = [10, 4, 64, 64]
+    parameters['F_strides2'] = [1,1,1,1]
+    parameters['M2'] = [1, 2, 2, 1]
+    parameters['M_strides2'] = [1, 2, 2, 1]
+
+    parameters['W3'] = [5, 2, 64, 128]
+    parameters['F_strides3'] = [1,1,1,1]
+    parameters['M3'] = [1, 2, 2, 1]
+    parameters['M_strides3'] = [1, 2, 2, 1]
+
+    parameters['W4'] = [5, 2, 128, 128]
+    parameters['F_strides4'] = [1,1,1,1]
+    
+    
+    
+    if is_training:
+        dropout_prob = tf.placeholder(tf.float32, name='keep_prob')
+    
+    # reshape input
+    input_frequency_size = model_settings['dct_coefficient_count']
+    input_time_size = model_settings['spectrogram_length']
+    fingerprint_4d = tf.reshape(fingerprint_input,
+                              [-1, input_time_size, input_frequency_size, 1])
+    
+    ## first layer.
+    layer_name = 'conv_1'
+    with tf.name_scope(layer_name):
+        hidden1 = conv_layer(fingerprint_4d, parameters['W1'], parameters['F_strides1'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False)
+        if is_training:
+            hidden1_dropout = tf.nn.dropout(hidden1, dropout_prob)
+        else:
+            hidden1_dropout = hidden1
+    
+        maxpool1= tf.nn.max_pool(hidden1_dropout,  ksize = parameters['M1'], strides = parameters['M_strides1'], padding = 'SAME')
+            
+    # second layer
+    layer_name = 'conv_2'
+    with tf.name_scope(layer_name):
+        hidden2 = conv_layer(maxpool1, parameters['W2'], parameters['F_strides2'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False)
+        if is_training:
+            hidden2_dropout = tf.nn.dropout(hidden2, dropout_prob)
+        else:
+            hidden2_dropout = hidden2
+    
+        maxpool2= tf.nn.max_pool(hidden2_dropout,  ksize = parameters['M2'], strides = parameters['M_strides2'], padding = 'SAME')
+
+   # third layer.
+    layer_name = 'conv_3'
+    with tf.name_scope(layer_name):
+        hidden3 = conv_layer(maxpool2, parameters['W3'], parameters['F_strides3'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False)
+        if is_training:
+            hidden3_dropout = tf.nn.dropout(hidden3, dropout_prob)
+        else:
+            hidden3_dropout = hidden3
+        
+        maxpool3= tf.nn.max_pool(hidden3_dropout,  ksize = parameters['M3'], strides = parameters['M_strides3'], padding = 'SAME')
+        
+        
+    # forth layer
+    layer_name = 'conv_4'
+    with tf.name_scope(layer_name):
+        hidden4 = conv_layer(hidden3_dropout, parameters['W4'], parameters['F_strides4'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False)
+        if is_training:
+            hidden4_dropout = tf.nn.dropout(hidden4, dropout_prob)
+        else:
+            hidden4_dropout = hidden4
+            
+    ## hidden4 is used for fully connected layer.
+    layer_name = 'fully_connected'
+    with tf.name_scope( layer_name):
+        label_count = model_settings['label_count']
+        last_layer = tf.contrib.layers.flatten(hidden4_dropout)
+        final_fc = tf.contrib.layers.fully_connected(last_layer, label_count, activation_fn=None)
+        
+    if is_training:
+        return final_fc, dropout_prob
+    else:
+        return final_fc
