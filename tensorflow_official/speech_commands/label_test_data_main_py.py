@@ -21,16 +21,14 @@ def label_test(graph_path, label_path, test_data_path, submission_file_template_
     
     file_test = file_list
     wav_path_test = [os.path.join(test_data_path, file) for file in file_test ]
-    print(label_path)
-    print(graph_path)
     label_test = lm.label_wav(wav_path_test, label_path, graph_path, 'wav_data:0','labels_softmax:0',12)
-    
+        
     ## save the result in submission file.
     with open(submission_output_path, 'w',newline = '\n') as f:
         data_writer = csv.writer(f, delimiter = ',')
         data_writer.writerow(['fname', 'label'])
-    for ii in range(len(file_test)):
-        data_writer.writerow([file_test[ii], label_test[ii]])
+        for ii in range(len(file_test)):
+            data_writer.writerow([file_test[ii], label_test[ii]])
 def main(_):
     label_test(FLAGS.graph_path, FLAGS.label_path, FLAGS.test_data_path, FLAGS.submission_file_template_path, FLAGS.submission_output_path)
         
