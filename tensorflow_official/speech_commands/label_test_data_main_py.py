@@ -12,7 +12,7 @@ def label_test(graph_path, label_path, test_data_path, submission_file_template_
     submission_field_name = ['fname', 'label']
     file_list = []
     with open(submission_file_template_path) as f:
-        data = csv.DictReader(f, delimiter = ';')
+        data = csv.DictReader(f, delimiter = ',')
         file_list = [row['fname'] for row in data]
     
     ## feed into the provided function label_wav
@@ -36,22 +36,22 @@ def main(_):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
-    '--graph_path',type = str, default = 'E:\Juyue\\tmp_conv_deep_norm\my_frozen_graph_conv.pb',
+    '--graph_path',type = str, default = '/home/yihu/DB/kaggle_CLH/gpu_tmp/my_frozen_graph.pb',
     help = 'Path to the file containing the frozen graph')
     parser.add_argument(
-    '--label_path',type = str, default =  'E:\Juyue\kaggle_speech_dataset\conv_labels.txt',
+    '--label_path',type = str, default =  '/home/yihu/DB/kaggle_CLH/gpu_tmp/speech_commands_train/conv_labels.txt',
     help = 'Path to file containing labels.'
     )
     parser.add_argument(
-    '--submission_file_template_path', type = str, default = 'E:\Juyue\kaggle_speech_dataset\sample_submission.csv',
+    '--submission_file_template_path', type = str, default = '/home/yihu/DB/KAGGLE/Tensorflow_Speech/sample_submission/sample_submission.csv',
     help = 'Path to file containing sample submission.'
     )
     parser.add_argument(
-    '--submission_output_path', type = str, default = 'E:\Juyue\kaggle_speech_dataset\submission.csv',
+    '--submission_output_path', type = str, default = '/home/yihu/DB/kaggle_CLH/gpu_tmp/submission_CPU.csv',
     help = 'Path to file storing labeled submission.'
     )
     parser.add_argument(
-    '--test_data_path', type = str, default = 'E:\Juyue\kaggle_speech_dataset\\test\\audio',
+    '--test_data_path', type = str, default = '/home/yihu/DB/KAGGLE/Tensorflow_Speech/test/audio',
     help = 'Path to test data'
     )   
     FLAGS, unparsed = parser.parse_known_args()
