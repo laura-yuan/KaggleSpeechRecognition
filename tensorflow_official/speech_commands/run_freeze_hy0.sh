@@ -1,0 +1,1 @@
+python freeze.py --start_checkpoint=/home/yihu/DB/KAGGLE/Tensorflow_Speech/results/tmp_0/speech_commands_train/conv.ckpt-1200  --output_file=/home/yihu/DB/KAGGLE/Tensorflow_Speech/results/tmp_0/my_frozen_graph.pb
