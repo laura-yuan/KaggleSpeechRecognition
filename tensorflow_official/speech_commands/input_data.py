@@ -57,6 +57,26 @@ def prepare_words_list(wanted_words):
   """
   return [SILENCE_LABEL, UNKNOWN_WORD_LABEL] + wanted_words
 
+def rescale_figureprints(data_in):
+    ## hopefully this could be a better example.
+    with tf.name_scope('rescale_fingerprints'):
+        ## clip the data first
+        pct_thresh_low = tf.constant(5.0)
+        pct_thresh_high = tf.constant(97.5)
+        clip_low = tf.contrib.distributions.percentile(data_in, pct_thresh_low )
+        clip_high =  tf.contrib.distributions.percentile(data_in,  pct_thresh_high )
+        data_clip = tf.clip_by_value(data_in, clip_low, clip_high)
+
+        ## normalize the input.
+        data_clip_reshape = tf.reshape(data_clip, (tf.size(data_clip), 1))
+
+        data_mean, data_variance = tf.nn.moments(data_clip_reshape, 0)
+        data_centered = tf.subtract(data_clip, data_mean)
+        eps = tf.constant(0.0000001)
+        data_divider = tf.maximum(tf.reduce_max(tf.abs(data_centered)), eps)
+        data_out_norm = tf.divide(data_centered, data_divider)
+#      data_out_norm = data_out
+    return data_out_norm
 
 def which_set(filename, validation_percentage, testing_percentage):
   """Determines which data partition the file should belong to.
@@ -346,11 +366,13 @@ class AudioProcessor(object):
     Args:
       model_settings: Information about the current model being trained.
     """
+    mfcc_normalization_flag = model_settings['mfcc_normalization_flag']
     desired_samples = model_settings['desired_samples']
     self.wav_filename_placeholder_ = tf.placeholder(tf.string, [])
     wav_loader = io_ops.read_file(self.wav_filename_placeholder_)
     wav_decoder = contrib_audio.decode_wav(
         wav_loader, desired_channels=1, desired_samples=desired_samples)
+
     # Allow the audio sample's volume to be adjusted.
     self.foreground_volume_placeholder_ = tf.placeholder(tf.float32, [])
     scaled_foreground = tf.multiply(wav_decoder.audio,
@@ -372,18 +394,35 @@ class AudioProcessor(object):
     background_mul = tf.multiply(self.background_data_placeholder_,
                                  self.background_volume_placeholder_)
     background_add = tf.add(background_mul, sliced_foreground)
-    background_clamp = tf.clip_by_value(background_add, -1.0, 1.0)
-    
+    background_clamp = background_add
     # Run the spectrogram and MFCC ops to get a 2D 'fingerprint' of the audio.
-    spectrogram = contrib_audio.audio_spectrogram(
+    if mfcc_normalization_flag:
+      # do not clip audio.
+      spectrogram = contrib_audio.audio_spectrogram(
         background_clamp,
         window_size=model_settings['window_size_samples'],
         stride=model_settings['window_stride_samples'],
         magnitude_squared=True)
-    self.mfcc_ = contrib_audio.mfcc(
+
+      mfcc_before_normalization = contrib_audio.mfcc(
+          spectrogram,
+          wav_decoder.sample_rate,
+          dct_coefficient_count=model_settings['dct_coefficient_count'])
+      ## normalize the mfcc. clip-->center-->norm
+      self.mfcc_ = rescale_figureprints(mfcc_before_normalization)
+    else:
+      background_clamp = tf.clip_by_value(background_add, -1.0, 1.0) # normalize here.
+      # Run the spectrogram and MFCC ops to get a 2D 'fingerprint' of the audio.
+      spectrogram = contrib_audio.audio_spectrogram(
+        background_clamp,
+        window_size=model_settings['window_size_samples'],
+        stride=model_settings['window_stride_samples'],
+        magnitude_squared=True)
+      self.mfcc_ = contrib_audio.mfcc(
         spectrogram,
         wav_decoder.sample_rate,
         dct_coefficient_count=model_settings['dct_coefficient_count'])
+    
 
   def set_size(self, mode):
     """Calculates the number of samples in the dataset partition.

@@ -25,7 +25,7 @@ import tensorflow as tf
 
 def prepare_model_settings(label_count, sample_rate, clip_duration_ms,
                            window_size_ms, window_stride_ms,
-                           dct_coefficient_count):
+                           dct_coefficient_count, mfcc_normalization_flag):
   """Calculates common settings needed for all models.
 
   Args:
@@ -57,6 +57,7 @@ def prepare_model_settings(label_count, sample_rate, clip_duration_ms,
       'fingerprint_size': fingerprint_size,
       'label_count': label_count,
       'sample_rate': sample_rate,
+      'mfcc_normalization_flag': mfcc_normalization_flag
   }
 
 
@@ -107,6 +108,7 @@ def create_model(fingerprint_input, model_settings, model_architecture,
   elif model_architecture == 'low_latency_svdf':
     return create_low_latency_svdf_model(fingerprint_input, model_settings,
                                          is_training, runtime_settings)
+
   else:
     raise Exception('model_architecture argument "' + model_architecture +
                     '" not recognized, should be one of "single_fc", "conv",' +

@@ -102,7 +102,7 @@ def main(_):
   model_settings = models.prepare_model_settings(
       len(input_data.prepare_words_list(FLAGS.wanted_words.split(','))),
       FLAGS.sample_rate, FLAGS.clip_duration_ms, FLAGS.window_size_ms,
-      FLAGS.window_stride_ms, FLAGS.dct_coefficient_count)
+      FLAGS.window_stride_ms, FLAGS.dct_coefficient_count, FLAGS.mfcc_normalization_flag)
   audio_processor = input_data.AudioProcessor(
       FLAGS.data_url, FLAGS.data_dir, FLAGS.silence_percentage,
       FLAGS.unknown_percentage,
@@ -444,6 +444,11 @@ if __name__ == '__main__':
       type=bool,
       default=False,
       help='Whether to check for invalid numbers during processing')
-
+  parser.add_argument(
+      '--mfcc_normalization_flag',
+      type=bool,
+      default=False,
+      help='Whether to normalize the mfcc '
+  )
   FLAGS, unparsed = parser.parse_known_args()
   tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
