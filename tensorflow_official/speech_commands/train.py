@@ -99,11 +99,11 @@ def main(_):
   # Begin by making sure we have the training data we need. If you already have
   # training data of your own, use `--data_url= ` on the command line to avoid
   # downloading.
-  model_settings = models.prepare_model_settings(
+  model_settings = models.prepare_model_settings(                      # models.prepare_model_settings()
       len(input_data.prepare_words_list(FLAGS.wanted_words.split(','))),
       FLAGS.sample_rate, FLAGS.clip_duration_ms, FLAGS.window_size_ms,
       FLAGS.window_stride_ms, FLAGS.dct_coefficient_count)
-  audio_processor = input_data.AudioProcessor(
+  audio_processor = input_data.AudioProcessor(                         # input_data.AudioProcessor()
       FLAGS.data_url, FLAGS.data_dir, FLAGS.silence_percentage,
       FLAGS.unknown_percentage,
       FLAGS.wanted_words.split(','), FLAGS.validation_percentage,
@@ -126,33 +126,33 @@ def main(_):
         'lists, but are %d and %d long instead' % (len(training_steps_list),
                                                    len(learning_rates_list)))
 
-  fingerprint_input = tf.placeholder(
+  fingerprint_input = tf.placeholder(                                  # tf.placeholder()
       tf.float32, [None, fingerprint_size], name='fingerprint_input')
 
-  logits, dropout_prob = models.create_model(
+  logits, dropout_prob = models.create_model(                          # models.create_model()
       fingerprint_input,
       model_settings,
       FLAGS.model_architecture,
       is_training=True)
 
   # Define loss and optimizer
-  ground_truth_input = tf.placeholder(
+  ground_truth_input = tf.placeholder(                                 # tf.placeholder()
       tf.int64, [None], name='groundtruth_input')
 
   # Optionally we can add runtime checks to spot when NaNs or other symptoms of
   # numerical errors start occurring during training.
   control_dependencies = []
   if FLAGS.check_nans:
-    checks = tf.add_check_numerics_ops()
+    checks = tf.add_check_numerics_ops()                              # tf.add_check_numerics_ops()
     control_dependencies = [checks]
 
   # Create the back propagation and training evaluation machinery in the graph.
-  with tf.name_scope('cross_entropy'):
-    cross_entropy_mean = tf.losses.sparse_softmax_cross_entropy(
+  with tf.name_scope('cross_entropy'):                               # tf.name_scope()
+    cross_entropy_mean = tf.losses.sparse_softmax_cross_entropy(     # tf.losses.sparse_softmax_cross_entropy()
         labels=ground_truth_input, logits=logits)
 
   
-  with tf.name_scope('train'), tf.control_dependencies(control_dependencies):
+  with tf.name_scope('train'), tf.control_dependencies(control_dependencies):       tf.control_dependencies()
     learning_rate_input = tf.placeholder(
         tf.float32, [], name='learning_rate_input')
 #    train_step = tf.train.GradientDescentOptimizer(

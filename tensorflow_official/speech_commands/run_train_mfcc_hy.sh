@@ -1,3 +1,5 @@
+#!/bin/sh
+
 for MY_DCT in 13 26 32
 do
   for MY_WINDOW in 20 30 45 60
@@ -18,7 +20,7 @@ python train.py \
 --save_step_interval=50 \
 --model_architecture=conv \
 
-       let MY_STRIDE=`expr $MY_STRIDE + 10`
+       MY_STRIDE=`expr $MY_STRIDE + 10`
     done
   done
 done
