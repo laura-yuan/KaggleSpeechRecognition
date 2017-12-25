@@ -1,0 +1,1 @@
+python freeze.py --data_url= --start_checkpoint=E:/Juyue/tmp_conv_deep/speech_commands_train/conv_deep.ckpt-6000 --train_dir=E:/Juyue/tmp_conv_deep_norm/speech_commands_train --summaries_dir=E:/Juyue/tmp_conv_deep_norm/retrain_logs --save_step_interval=500 --model_architecture=conv_deep --eval_step_interval=200
