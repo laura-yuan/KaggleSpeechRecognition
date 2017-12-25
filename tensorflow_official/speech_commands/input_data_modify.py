@@ -392,7 +392,7 @@ class AudioProcessor(object):
       ## hopefully this could be a better example.
       with tf.name_scope('rescale_fingerprints'):
           ## clip the data first
-          pct_thresh_low = tf.constant(5. )
+          pct_thresh_low = tf.constant(5.0)
           pct_thresh_high = tf.constant(97.5)
           clip_low = tf.contrib.distributions.percentile(data_in, pct_thresh_low )
           clip_high =  tf.contrib.distributions.percentile(data_in,  pct_thresh_high )
@@ -403,9 +403,9 @@ class AudioProcessor(object):
 
           data_mean, data_variance = tf.nn.moments(data_clip_reshape, 0)
           data_centered = tf.subtract(data_clip, data_mean)
-          eps = tf.constant(0.01)
+          eps = tf.constant(0.0000001)
           data_divider = tf.maximum(tf.reduce_max(tf.abs(data_centered)), eps)
-          data_out_norm = tf.divide(data_centered , data_divider )
+          data_out_norm = tf.divide(data_centered, data_divider)
 #      data_out_norm = data_out
       return data_out_norm 
     
