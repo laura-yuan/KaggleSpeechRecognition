@@ -102,6 +102,8 @@ def create_model(fingerprint_input, model_settings, model_architecture,
     return create_conv_model(fingerprint_input, model_settings, is_training)
   elif model_architecture == 'conv_deep':
     return create_model_conv_deep(fingerprint_input, model_settings, is_training)
+  elif model_architecture == 'conv_with_triplet_loss':
+    return create_model_conv_shallow_plus_triplet_loss(fingerprint_input, model_settings, is_training)
   elif model_architecture == 'low_latency_conv':
     return create_low_latency_conv_model(fingerprint_input, model_settings,
                                          is_training)
@@ -596,7 +598,103 @@ def conv_layer(X, f, strides, layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False
 #     variable_summaries(A,'activation')
         
     return A
-    
+
+
+def triplet_loss(y_pred, alpha=0.2):
+    """
+    Implementation of the triplet loss as defined by formula (3)
+
+    Arguments:
+    y_true -- true labels, required when you define a loss in Keras, you don't need it in this function.
+    y_pred -- python list containing three objects:
+            anchor -- the encodings for the anchor images, of shape (None, 128)
+            positive -- the encodings for the positive images, of shape (None, 128)
+            negative -- the encodings for the negative images, of shape (None, 128)
+
+    Returns:
+    loss -- real number, value of the loss
+    """
+
+    anchor, positive, negative = y_pred[0], y_pred[1], y_pred[2]
+
+    ### START CODE HERE ### (≈ 4 lines)
+    # Step 1: Compute the (encoding) distance between the anchor and the positive, you will need to sum over axis=-1
+    pos_dist = tf.reduce_sum(tf.square(tf.subtract(anchor, positive)), axis=-1)
+    # Step 2: Compute the (encoding) distance between the anchor and the negative, you will need to sum over axis=-1
+    neg_dist = tf.reduce_sum(tf.square(tf.subtract(anchor, negative)), axis=-1)
+    # Step 3: subtract the two previous distances and add alpha.
+    basic_loss = tf.add(tf.subtract(pos_dist, neg_dist), alpha)
+    # Step 4: Take the maximum of basic_loss and 0.0. Sum over the training examples.
+    loss = tf.reduce_sum(tf.nn.relu(basic_loss))
+    ### END CODE HERE ###
+
+    return loss
+def create_model_conv_shallow_plus_triplet_loss(fingerprint_input, model_settings, is_training):
+    if is_training:
+      dropout_prob = tf.placeholder(tf.float32, name='dropout_prob')
+    input_frequency_size = model_settings['dct_coefficient_count']
+    input_time_size = model_settings['spectrogram_length']
+    fingerprint_4d = tf.reshape(fingerprint_input,
+                                [-1, input_time_size, input_frequency_size, 1])
+    parameters = {}
+    parameters['W1'] = [20, 8, 1, 64]
+    parameters['F_strides1'] = [1,1,1,1]
+    parameters['M1'] = [1, 2, 2, 1]
+    parameters['M_strides1'] = [1, 2, 2, 1]
+
+    parameters['W2'] = [10, 4, 64, 64]
+    parameters['F_strides2'] = [1, 1, 1, 1]
+    parameters['M2'] = [1, 2, 2, 1]
+    parameters['M_strides2'] = [1, 2, 2, 1]
+
+    parameters['W3'] = [5, 2, 64, 64]
+    parameters['F_strides3'] = [1, 1, 1, 1]
+    parameters['M3'] = [1, 2, 2, 1]
+    parameters['M_strides3'] = [1, 2, 2, 1]
+
+    encoding_len = 128
+
+    layer_name = 'conv_1'
+    with tf.name_scope(layer_name):
+        hidden1 = conv_layer(fingerprint_4d, parameters['W1'], parameters['F_strides1'], layer_name, act=tf.nn.relu,
+                             use_cudnn_on_gpu=False)
+        if is_training:
+            hidden1_dropout = tf.nn.dropout(hidden1, dropout_prob)
+        else:
+            hidden1_dropout = hidden1
+
+        maxpool1 = tf.nn.max_pool(hidden1_dropout, ksize=parameters['M1'], strides=parameters['M_strides1'],
+                                  padding='SAME')
+
+    # second layer
+    layer_name = 'conv_2'
+    with tf.name_scope(layer_name):
+        hidden2 = conv_layer(maxpool1, parameters['W2'], parameters['F_strides2'], layer_name, act=tf.nn.relu,
+                             use_cudnn_on_gpu=False)
+        if is_training:
+            hidden2_dropout = tf.nn.dropout(hidden2, dropout_prob)
+        else:
+            hidden2_dropout = hidden2
+
+    ## hidden2 is used for fully connected layer. final_fc os the logits.
+    layer_name = 'fully_connected'
+    with tf.name_scope(layer_name):
+        label_count = model_settings['label_count']
+        last_layer = tf.contrib.layers.flatten(hidden2_dropout)
+
+    with tf.name_scope('logits'):
+        final_fc_logits = tf.contrib.layers.fully_connected(last_layer, label_count, activation_fn=None)
+
+    with tf.name_scope('encoding'):
+        final_fc_encoding = tf.contrib.layers.fully_connected(last_layer, encoding_len, activation_fn=None)
+
+
+    if is_training:
+        return final_fc_logits, final_fc_encoding, dropout_prob
+    else:
+        return final_fc_logits, final_fc_encoding
+
+
 def create_model_conv_deep(fingerprint_input, model_settings, is_training):
 #         parameters = model_settings['parameter']
 

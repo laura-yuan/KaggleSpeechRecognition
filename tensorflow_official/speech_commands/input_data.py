@@ -57,6 +57,38 @@ def prepare_words_list(wanted_words):
   """
   return [SILENCE_LABEL, UNKNOWN_WORD_LABEL] + wanted_words
 
+def verification_utils_prepare_triplet(ground_truth_label, label_count = 12, num_of_triplets = 1000, hard_mode = False, predicted_label = None):
+    # should have same example.
+    ind_each_category = [np.nonzero(ll == ground_truth_label) for ll in range(label_count)]
+
+
+    if hard_mode :
+        # if a sample is predicted to be category A, then, this sample would be negative sample for category A.
+        correct_prediction = predicted_label == ground_truth_label
+        category_pair = np.asarray([[predicted_label[ii], ii] for ii, correct in enumerate(correct_prediction) if not correct])
+        rep_fold = max(num_of_triplets//category_pair.shape[0], 1) # at least one fold.
+        category_pair_rep = np.repeat(category_pair, rep_fold, axis=0)
+
+        anchor_category = category_pair_rep[:,0]
+        negative_array = category_pair_rep[:,1]
+
+    else:
+        anchor_category = np.random.randint(label_count, size=num_of_triplets)
+        negative_category = [np.random.choice(list(set(list(range(label_count))) - {anchor_this_category})) for
+                             anchor_this_category in anchor_category]
+        negative = [np.random.choice(ind_each_category[anchor_this_category][0], 1, ) for anchor_this_category in
+                    negative_category]
+        negative_array = np.asarray(negative)
+
+    anchor_and_positive = [np.random.choice(ind_each_category[anchor_this_category][0], 2, replace=False) for
+                           anchor_this_category in anchor_category]
+    anchor_and_positive_array = np.asarray(anchor_and_positive)
+
+    triplets = np.column_stack((anchor_and_positive_array, negative_array))
+
+
+    return triplets
+
 def rescale_figureprints(data_in):
     ## hopefully this could be a better example.
     with tf.name_scope('rescale_fingerprints'):

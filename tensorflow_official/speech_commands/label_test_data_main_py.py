@@ -12,7 +12,7 @@ def label_test(graph_path, label_path, test_data_path, submission_file_template_
     submission_field_name = ['fname', 'label']
     file_list = []
     with open(submission_file_template_path) as f:
-        data = csv.DictReader(f, delimiter = ';')
+        data = csv.DictReader(f, delimiter = ',')
         file_list = [row['fname'] for row in data]
     
     ## feed into the provided function label_wav
@@ -36,7 +36,7 @@ def main(_):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
-    '--graph_path',type = str, default = 'E:\Juyue\\tmp_conv_deep_norm\my_frozen_graph_conv.pb',
+    '--graph_path',type = str, default = 'E:\Juyue\\tmp_conv_norm\my_frozen_graph_conv.pb ',
     help = 'Path to the file containing the frozen graph')
     parser.add_argument(
     '--label_path',type = str, default =  'E:\Juyue\kaggle_speech_dataset\conv_labels.txt',

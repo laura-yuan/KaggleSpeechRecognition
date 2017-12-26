@@ -69,44 +69,13 @@ def run_graph(wav_file_list, labels, input_layer_name, output_layer_name,
     # predefine the length of the list
     softmax_tensor = sess.graph.get_tensor_by_name(output_layer_name)
     labels_of_wav = [None for x in wav_file_list]
-    ii = 0
-    # you might be able to load several data at a time.
-
-    # input_to_conv = np.zeros((5, 3920))
-    # input_before_normalization = np.zeros((5, 98, 30))
-    # fingerprint_tensor = sess.graph.get_tensor_by_name('Reshape:0')
-    # # mfcc_tensor = sess.graph.get_tensor_by_name('Reshape:1')
-    #
-    #
-    # count = 0
-    # for wav in wav_file_list[0:5]:
-    #     with open(wav, 'rb') as wav_file:
-    #         wav_data = wav_file.read()
-    #     # input_to_conv[count, :], input_before_normalization[count, :, :] = sess.run(fingerprint_tensor, mfcc_tensor, {input_layer_name: wav_data})
-    #     input_to_conv[count, :] = sess.run(fingerprint_tensor, {input_layer_name: wav_data})
-    #     count = count + 1
-    # plt.figure(ii, figsize=(5, 10))
-    #
-    # for ii in range(5):
-    #     # ax_mfcc = plt.subplot(2, 6, ii + 1)
-    #     ax_norm = plt.subplot(2, 6, ii + 1 + 6)
-    #     # ax_mfcc.imshow(input_before_normalization[ii, :, :])
-    #     ax_norm.imshow(np.reshape(input_to_conv[ii,:], [98, 40]), cmap='gray', clim=[-2, 2] )
-    #
-    # predictions = sess.run(softmax_tensor, {fingerprint_tensor: input_to_conv[0,:]})
-
     # wav_data has to be one file.
+    ii = 0
     for wav in wav_file_list:
         with open(wav, 'rb') as wav_file:
             wav_data = wav_file.read()
 
         predictions, = sess.run(softmax_tensor, {input_layer_name: wav_data})
-
-        # Sort to show labels in order of confidence
-        #   for node_id in top_k:
-        #   human_string = labels[node_id]
-        #   score = predictions[node_id]
-        #   print('%s (score = %.5f)' % (human_string, score))
         
         top_k = predictions.argsort()[-num_top_predictions:][::-1]
         if labels[top_k[0]] == '_unknown_':

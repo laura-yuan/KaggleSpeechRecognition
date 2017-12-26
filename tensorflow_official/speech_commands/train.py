@@ -88,12 +88,6 @@ FLAGS = None
 def main(_):
   # We want to see all the logging messages for this tutorial.
   tf.logging.set_verbosity(tf.logging.INFO)
-  
-#  config = tf.ConfigProto(device_count={"CPU": 4}, # limit to num_cpu_core CPU usage  
-#                inter_op_parallelism_threads = 1,   
-#                intra_op_parallelism_threads = 4,  
-#                log_device_placement=True)  
-  # Start a new TensorFlow session.
   sess = tf.InteractiveSession()
 
   # Begin by making sure we have the training data we need. If you already have
@@ -108,9 +102,12 @@ def main(_):
       FLAGS.unknown_percentage,
       FLAGS.wanted_words.split(','), FLAGS.validation_percentage,
       FLAGS.testing_percentage, model_settings)
+
   fingerprint_size = model_settings['fingerprint_size']
   label_count = model_settings['label_count']
   time_shift_samples = int((FLAGS.time_shift_ms * FLAGS.sample_rate) / 1000)
+
+  # should you be smarter to have adaptive learning rate controlled by training accuracy and validation accuracy?
   # Figure out the learning rates for each training phase. Since it's often
   # effective to have high learning rates at the start of training, followed by
   # lower levels towards the end, the number of steps and learning rates can be
@@ -174,7 +171,7 @@ def main(_):
 
   # Merge all the summaries and write them out to /tmp/retrain_logs (by default)
     
-  # training result.
+  # result for training, validation and testing.
   tf.summary.scalar('cross_entropy', cross_entropy_mean)
   tf.summary.scalar('accuracy', evaluation_step)
   confusion_matrix_save = tf.expand_dims(tf.expand_dims(tf.cast(confusion_matrix, tf.float32), 0), 3)
@@ -185,6 +182,8 @@ def main(_):
                                        sess.graph)
   validation_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/validation')
   test_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/test')
+
+  ## start running.
   tf.global_variables_initializer().run()
 
   start_step = 1
@@ -219,11 +218,13 @@ def main(_):
     train_fingerprints, train_ground_truth = audio_processor.get_data(
         FLAGS.batch_size, 0, model_settings, FLAGS.background_frequency,
         FLAGS.background_volume, time_shift_samples, 'training', sess)
+
+
     # Run the graph with this batch of training data.
-    train_summary, train_accuracy, cross_entropy_value, _, _ = sess.run(
+    train_summary, train_accuracy, cross_entropy_value, train_confus_matrix, predicted_value, _, _ = sess.run(
         [
-            merged_summaries, evaluation_step, cross_entropy_mean, train_step,
-            increment_global_step
+            merged_summaries, evaluation_step, cross_entropy_mean, confusion_matrix, predicted_indices, train_step,
+                increment_global_step
         ],
         feed_dict={
             fingerprint_input: train_fingerprints,
@@ -231,13 +232,20 @@ def main(_):
             learning_rate_input: learning_rate_value,
             dropout_prob: 0.5
         })
+
     train_writer.add_summary(train_summary, training_step)
     tf.logging.info('Step #%d: rate %f, accuracy %.1f%%, cross entropy %f' %
                     (training_step, learning_rate_value, train_accuracy * 100,
                      cross_entropy_value))
     is_last_step = (training_step == training_steps_max)
     
-    
+    # create training set for encoding session.
+    easy_triplets = input_data.verification_utils_prepare_triplet(train_ground_truth, hard_mode=False, num_of_triplets=FLAGS.batch_size)
+    hard_triplets = input_data.verification_utils_prepare_triplet(train_ground_truth, hard_mode=True, num_of_triplets=FLAGS.batch_size, predicted_label=predicted_value)
+
+    # define encoding.
+
+
     ## validation. inside of training loop
     if (training_step % FLAGS.eval_step_interval) == 0 or is_last_step:
       set_size = audio_processor.set_size('validation')
