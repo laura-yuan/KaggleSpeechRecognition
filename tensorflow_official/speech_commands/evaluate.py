@@ -80,10 +80,9 @@ import tensorflow as tf
 
 import input_data
 import models
-from tensorflow.python.platform import gfile
+import evaluate_utils
 
 FLAGS = None
-
 
 def main(_):
     # We want to see all the logging messages for this tutorial.
@@ -146,7 +145,8 @@ def main(_):
     if FLAGS.start_checkpoint:
         models.load_variables_from_checkpoint(sess, FLAGS.start_checkpoint)
         start_step = global_step.eval(session=sess)
-
+    ## use the start_checkpoint. save the test csv under the same file.
+        logpath = os.path.join(os.path.dirname(FLAGS.start_checkpoint),'validataon_result.csv')
     tf.logging.info('Network result from step: %d training', start_step)
 
 
@@ -156,7 +156,7 @@ def main(_):
         total_accuracy = 0
         total_conf_matrix = None
         for i in xrange(0, set_size, FLAGS.batch_size):
-            fingerprints, ground_truth = audio_processor.get_data(
+            fingerprints, ground_truth, files_path = audio_processor.get_data(
                 FLAGS.batch_size, i, model_settings, 0.0, 0.0, 0, 'testing', sess)
 
             accuracy, conf_matrix, predicted_label = sess.run(
@@ -173,8 +173,20 @@ def main(_):
                 total_conf_matrix = conf_matrix
             else:
                 total_conf_matrix += conf_matrix
-
-            # through predicted_label and ground truth. you will be able to tell the difference. listen to it here...
+            # through predicted_label and ground truth. you will be able to print out the wrong testing file... write it down.
+            wrong_prediction = ~(ground_truth == predicted_label)
+            wav_path_wrong = [files_path[ii] for ii, wrongness in enumerate(wrong_prediction) if wrongness]
+            wav_prediction_wrong = [predicted_label[ii] for ii, wrongness in enumerate(wrong_prediction) if wrongness]
+            wav_prediction_wrong_words = [audio_processor.words_list[ii] for ii in wav_prediction_wrong]
+            wav_ground_truth_wrong = [ground_truth[ii] for ii, wrongness in enumerate(wrong_prediction) if wrongness]
+            wav_ground_truth_wrong_words = [audio_processor.words_list[int(ii)] for ii in wav_ground_truth_wrong]
+            # turn number into labels.
+            if i == 0:
+                append_flag = False
+            else:
+                append_flag = True
+            evaluate_utils.record_wrong_predicted_file(logpath, wav_path_wrong, wav_prediction_wrong_words,
+                                                       wav_ground_truth_wrong_words, write_label_flag=True, append_flag=append_flag)
 
         tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
         tf.logging.info('validatation accuracy = %.1f%% (N=%d)' % (total_accuracy * 100,

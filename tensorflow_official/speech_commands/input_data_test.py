@@ -182,7 +182,7 @@ class InputDataTest(test.TestCase):
     audio_processor = input_data.AudioProcessor("", wav_dir, 10, 10, ["a", "b"],
                                                 10, 10, model_settings)
     with self.test_session() as sess:
-      result_data, result_labels = audio_processor.get_data(
+      result_data, result_labels, _ = audio_processor.get_data(
           10, 0, model_settings, 0.3, 0.1, 100, "training", sess)
     self.assertEqual(10, len(result_data))
     self.assertEqual(10, len(result_labels))

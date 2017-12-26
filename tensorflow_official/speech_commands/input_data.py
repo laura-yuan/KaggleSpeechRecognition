@@ -490,6 +490,7 @@ class AudioProcessor(object):
 
     Returns:
       List of sample data for the transformed samples, and list of label indexes
+      also return the file names? so that you can check on them later on?
     """
     # Pick one of the partitions to choose samples from.
     candidates = self.data_index[mode]
@@ -497,9 +498,11 @@ class AudioProcessor(object):
       sample_count = len(candidates)
     else:
       sample_count = max(0, min(how_many, len(candidates) - offset))
-    # Data and labels will be populated and returned.
+    # Data, labels and file location will be populated and returned.
     data = np.zeros((sample_count, model_settings['fingerprint_size']))
     labels = np.zeros(sample_count)
+    files_path = [None for ii in range(sample_count)]
+
     desired_samples = model_settings['desired_samples']
     use_background = self.background_data and (mode == 'training')
     pick_deterministically = (mode != 'training')
@@ -551,11 +554,15 @@ class AudioProcessor(object):
         input_dict[self.foreground_volume_placeholder_] = 0
       else:
         input_dict[self.foreground_volume_placeholder_] = 1
+
       # Run the graph to produce the output audio.
       data[i - offset, :] = sess.run(self.mfcc_, feed_dict=input_dict).flatten()
       label_index = self.word_to_index[sample['label']]
       labels[i - offset] = label_index
-    return data, labels
+
+      files_path[i - offset] = sample['file']
+
+    return data, labels, files_path
 
   def get_unprocessed_data(self, how_many, model_settings, mode):
     """Retrieve sample data for the given partition, with no transformations.

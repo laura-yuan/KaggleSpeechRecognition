@@ -111,7 +111,7 @@ def main(_):
   label_count = model_settings['label_count']
   time_shift_samples = int((FLAGS.time_shift_ms * FLAGS.sample_rate) / 1000)
   print(time_shift_samples)
-  train_fingerprints, train_ground_truth = audio_processor.get_data(
+  train_fingerprints, train_ground_truth, _ = audio_processor.get_data(
         FLAGS.batch_size, 0, model_settings, FLAGS.background_frequency,
         FLAGS.background_volume, time_shift_samples, 'training', sess)
 
