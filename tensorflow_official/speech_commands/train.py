@@ -82,8 +82,26 @@ import input_data
 import models
 import train_utils
 from tensorflow.python.platform import gfile
+import pickle
 
 FLAGS = None
+
+class jy_summary:
+    def __init__(self, max_step):
+        self.accurarcy = np.zeros(max_step)
+        self.entropy = np.zeros(max_step)
+        self.confusion_matrix = [None for ii in range(max_step)]
+        self.learning_rate = np.zeros(max_step)
+        self.step = np.zeros(max_step)
+    def update(self, which_step, accuracy_value, entropy_value, confusion_matrix_value,learning_rate_value):
+        self.step = which_step
+        self.accurarcy[which_step] = accuracy_value
+        self.entropy[which_step] = entropy_value
+        self.confusion_matrix[which_step] = confusion_matrix_value
+        self.learning_rate[which_step] = learning_rate_value
+    def save(self, directory):
+        with open(directory, 'wb') as f:
+            pickle.dump(self, f)
 
 
 def main(_):
@@ -184,6 +202,15 @@ def main(_):
   validation_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/validation')
   test_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/test')
 
+  # prepare jy_summary
+  training_steps_max = np.sum(training_steps_list)
+  train_summary_jy = jy_summary(training_steps_max)
+  validation_summary_jy = jy_summary(training_steps_max)
+  test_summary_jy = jy_summary(1)
+
+  jy_summary_train_path = os.path.join(FLAGS.summaries_dir, FLAGS.model_architecture + 'train' + '.pickle')
+  jy_summary_validation_path = os.path.join(FLAGS.summaries_dir, FLAGS.model_architecture + 'validation' + '.pickle')
+  jy_summary_test_path = os.path.join(FLAGS.summaries_dir, FLAGS.model_architecture + 'test' + '.pickle')
 
   ## start running.
   tf.global_variables_initializer().run()
@@ -193,6 +220,8 @@ def main(_):
   if FLAGS.start_checkpoint:
     models.load_variables_from_checkpoint(sess, FLAGS.start_checkpoint)
     start_step = global_step.eval(session=sess)
+    train_summary_jy = pickle.load(jy_summary_train_path)
+    validation_summary_jy = pickle.load(jy_summary_validation_path)
 
   tf.logging.info('Training from step: %d ', start_step)
 
@@ -206,14 +235,7 @@ def main(_):
       'w') as f:
     f.write('\n'.join(audio_processor.words_list))
 
-  # Training loop.
-  training_steps_max = np.sum(training_steps_list)
 
-
-  ## write the jysummary.
-  train_summary_jy = jy_summary(training_steps_max)
-  validation_summary_jy = jy_summary(training_steps_max)
-  test_summary_jy = jy_summary(1)
 
 
   for training_step in xrange(start_step, training_steps_max + 1):
@@ -245,7 +267,7 @@ def main(_):
 
     train_writer.add_summary(train_summary, training_step)
     # you should write your own function to store the basic training information.
-    train_summary_jy.update(training_step, train_accuracy, train_cross_entropy_value, train_confusion_matrix, learning_rate_value)
+    train_summary_jy.update(training_step - 1, train_accuracy, train_cross_entropy_value, train_confusion_matrix, learning_rate_value)
 
     tf.logging.info('Step #%d: rate %f, accuracy %.1f%%, cross entropy %f' %
                     (training_step, learning_rate_value, train_accuracy * 100,
@@ -290,8 +312,9 @@ def main(_):
       tf.logging.info('Step %d: Validation accuracy = %.1f%% (N=%d)' %
                       (training_step, total_accuracy * 100, set_size))
 
-      validation_summary_jy.update(training_step, total_accuracy, total_entropy, total_conf_matrix,
+      validation_summary_jy.update(training_step - 1, total_accuracy, total_entropy, total_conf_matrix,
                               learning_rate_value)
+
     # Save the model checkpoint periodically.
     if (training_step % FLAGS.save_step_interval == 0 or
         training_step == training_steps_max):
@@ -299,6 +322,9 @@ def main(_):
                                      FLAGS.model_architecture + '.ckpt')
       tf.logging.info('Saving to "%s-%d"', checkpoint_path, training_step)
       saver.save(sess, checkpoint_path, global_step=training_step)
+    # Save the jy_summary as well.
+      train_summary_jy.save(jy_summary_train_path)
+      validation_summary_jy.save(jy_summary_validation_path)
 
   set_size = audio_processor.set_size('testing')
   tf.logging.info('set_size=%d', set_size)
@@ -325,8 +351,9 @@ def main(_):
     else:
       total_conf_matrix += validation_confusion_matrix
 
-    test_summary_jy.update(training_step, total_accuracy, total_entropy, total_conf_matrix,
+  test_summary_jy.update(training_step - 1, total_accuracy, total_entropy, total_conf_matrix,
                                  learning_rate_value)
+  test_summary_jy.save(jy_summary_test_path)
 
   tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
   tf.logging.info('Final test accuracy = %.1f%% (N=%d)' % (total_accuracy * 100,
@@ -447,7 +474,8 @@ if __name__ == '__main__':
   parser.add_argument(
       '--wanted_words',
       type=str,
-      default='yes,no,up,down,left,right,on,off,stop,go',
+      # default='yes,no,up,down,left,right,on,off,stop,go',
+      default='yes,no,up,down,left,rught,on,off,stop,go,bed,zero,one,two,three,four,five,six,seven,eight,nine,marvin,sheila,wow,bird,cat,dog,happy,house,',
       help='Words to use (others will be added to an unknown label)',)
   parser.add_argument(
       '--train_dir',
@@ -483,7 +511,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--jychen_summary_name',
       type=str,
-      defaul='/tmp/jy_summary',
+      default='/tmp/jy_summary',
       help='Share the same folder with tensorflow summary. reuse that dir.'
   )
   FLAGS, unparsed = parser.parse_known_args()
