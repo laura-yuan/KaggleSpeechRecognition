@@ -1,0 +1,1 @@
+python train.py --data_url= --data_dir=E:\Juyue\speech_dataset --how_many_training_steps=500,400,800 --learning_rate=0.001,0.0005,0.0001 --train_dir=E:/Juyue/tmp_conv/speech_commands_train --summaries_dir=E:/Juyue/tmp_conv/retrain_logs --save_step_interval=200 --model_architecture=conv --eval_step_interval=100 --start_checkpoint=E:\Juyue\tmp_conv\speech_commands_train\conv.ckpt

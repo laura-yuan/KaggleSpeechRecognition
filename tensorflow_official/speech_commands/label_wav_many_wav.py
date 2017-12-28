@@ -33,7 +33,8 @@ from __future__ import print_function
 
 import argparse
 import sys
-
+import numpy as np
+from matplotlib import pyplot as plt
 import tensorflow as tf
 
 # pylint: disable=unused-import
@@ -66,22 +67,15 @@ def run_graph(wav_file_list, labels, input_layer_name, output_layer_name,
     #   predictions per class
     
     # predefine the length of the list
+    softmax_tensor = sess.graph.get_tensor_by_name(output_layer_name)
     labels_of_wav = [None for x in wav_file_list]
+    # wav_data has to be one file.
     ii = 0
-   ## loop through all the files
     for wav in wav_file_list:
         with open(wav, 'rb') as wav_file:
             wav_data = wav_file.read()
-    
-    # wav_data has to be one file.
-        softmax_tensor = sess.graph.get_tensor_by_name(output_layer_name)
-        predictions, = sess.run(softmax_tensor, {input_layer_name: wav_data})
 
-        # Sort to show labels in order of confidence
-        #   for node_id in top_k:
-        #   human_string = labels[node_id]
-        #   score = predictions[node_id]
-        #   print('%s (score = %.5f)' % (human_string, score))
+        predictions, = sess.run(softmax_tensor, {input_layer_name: wav_data})
         
         top_k = predictions.argsort()[-num_top_predictions:][::-1]
         if labels[top_k[0]] == '_unknown_':
@@ -113,7 +107,6 @@ def label_wav(wav_file_list, labels, graph, input_name, output_name, how_many_la
 
   # load graph, which is stored in the default session
   load_graph(graph)
-
   return run_graph(wav_file_list, labels_list, input_name, output_name, how_many_labels)
 
 

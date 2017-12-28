@@ -80,10 +80,9 @@ import tensorflow as tf
 
 import input_data
 import models
-from tensorflow.python.platform import gfile
+import evaluate_utils
 
 FLAGS = None
-
 
 def main(_):
     # We want to see all the logging messages for this tutorial.
@@ -105,23 +104,7 @@ def main(_):
 
     fingerprint_size = model_settings['fingerprint_size']
     label_count = model_settings['label_count']
-    time_shift_samples = int((FLAGS.time_shift_ms * FLAGS.sample_rate) / 1000)
-
-    # should you be smarter to have adaptive learning rate controlled by training accuracy and validation accuracy?
-    # Figure out the learning rates for each training phase. Since it's often
-    # effective to have high learning rates at the start of training, followed by
-    # lower levels towards the end, the number of steps and learning rates can be
-    # specified as comma-separated lists to define the rate at each stage. For
-    # example --how_many_training_steps=10000,3000 --learning_rate=0.001,0.0001
-    # will run 13,000 training loops in total, with a rate of 0.001 for the first
-    # 10,000, and 0.0001 for the final 3,000.
-    training_steps_list = list(map(int, FLAGS.how_many_training_steps.split(',')))
-    learning_rates_list = list(map(float, FLAGS.learning_rate.split(',')))
-    if len(training_steps_list) != len(learning_rates_list):
-        raise Exception(
-            '--how_many_training_steps and --learning_rate must be equal length '
-            'lists, but are %d and %d long instead' % (len(training_steps_list),
-                                                       len(learning_rates_list)))
+    # time_shift_samples = int((FLAGS.time_shift_ms * FLAGS.sample_rate) / 1000)
 
     fingerprint_input = tf.placeholder(
         tf.float32, [None, fingerprint_size], name='fingerprint_input')
@@ -143,18 +126,6 @@ def main(_):
         checks = tf.add_check_numerics_ops()
         control_dependencies = [checks]
 
-    # Create the back propagation and training evaluation machinery in the graph.
-    with tf.name_scope('cross_entropy'):
-        cross_entropy_mean = tf.losses.sparse_softmax_cross_entropy(
-            labels=ground_truth_input, logits=logits)
-
-    with tf.name_scope('train'), tf.control_dependencies(control_dependencies):
-        learning_rate_input = tf.placeholder(
-            tf.float32, [], name='learning_rate_input')
-        #    train_step = tf.train.GradientDescentOptimizer(
-        #        learning_rate_input).minimize(cross_entropy_mean)
-        train_step = tf.train.AdamOptimizer(
-            learning_rate_input).minimize(cross_entropy_mean)
     predicted_indices = tf.argmax(logits, 1)
     correct_prediction = tf.equal(predicted_indices, ground_truth_input)
     confusion_matrix = tf.confusion_matrix(
@@ -162,138 +133,91 @@ def main(_):
     evaluation_step = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
     global_step = tf.train.get_or_create_global_step()
-    increment_global_step = tf.assign(global_step, global_step + 1)
 
     saver = tf.train.Saver(tf.global_variables())
 
-    # Merge all the summaries and write them out to /tmp/retrain_logs (by default)
-
-    # training result.
-    tf.summary.scalar('cross_entropy', cross_entropy_mean)
-    tf.summary.scalar('accuracy', evaluation_step)
-    confusion_matrix_save = tf.expand_dims(tf.expand_dims(tf.cast(confusion_matrix, tf.float32), 0), 3)
-    tf.summary.image('confusion_matrix', confusion_matrix_save)
-
-    merged_summaries = tf.summary.merge_all()
-    train_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/train',
-                                         sess.graph)
-    validation_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/validation')
-    test_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/test')
+    ## start running.
     tf.global_variables_initializer().run()
 
     start_step = 1
 
+    ## load from trained graph
     if FLAGS.start_checkpoint:
         models.load_variables_from_checkpoint(sess, FLAGS.start_checkpoint)
         start_step = global_step.eval(session=sess)
+    ## use the start_checkpoint. save the test csv under the same file.
+    tf.logging.info('Network result from step: %d training', start_step)
 
-    tf.logging.info('Training from step: %d ', start_step)
 
-    # Save graph.pbtxt.
-    tf.train.write_graph(sess.graph_def, FLAGS.train_dir,
-                         FLAGS.model_architecture + '.pbtxt')
+    if FLAGS.evaluate_kaggle_test_flag:
+        logpath = os.path.join(os.path.dirname(FLAGS.start_checkpoint), 'kaggle_test.csv')
+        _, set_size = input_data.get_kaggle_test_file_list(FLAGS.submission_template_path)
+        tf.logging.info('kaggle test set_size=%d', set_size)
+        for i in xrange(0, set_size, FLAGS.batch_size):
+            fingerprints, ground_truth, files_path = audio_processor.get_data_kaggle_test(
+                FLAGS.batch_size, i, model_settings, FLAGS.submission_template_path, FLAGS.test_data_path, sess)
 
-    # Save list of words.
-    with gfile.GFile(
-            os.path.join(FLAGS.train_dir, FLAGS.model_architecture + '_labels.txt'),
-            'w') as f:
-        f.write('\n'.join(audio_processor.words_list))
+            predicted_label = sess.run(
+                predicted_indices,
+                feed_dict={
+                    fingerprint_input: fingerprints,
+                    ground_truth_input: ground_truth,
+                    dropout_prob: 1.0
+                })
+           # turn number into labels.
+            if i == 0:
+                append_flag = False
+            else:
+                append_flag = True
+            # actually, only relative path...how
+            my_words_list = [evaluate_utils.eliminate_underscore(word) for word in audio_processor.words_list]
+            predicted_words = [my_words_list[ii] for ii in predicted_label]
 
-    # Training loop.
-    training_steps_max = np.sum(training_steps_list)
-    for training_step in xrange(start_step, training_steps_max + 1):
-        # Figure out what the current learning rate is.
-        training_steps_sum = 0
-        for i in range(len(training_steps_list)):
-            training_steps_sum += training_steps_list[i]
-            if training_step <= training_steps_sum:
-                learning_rate_value = learning_rates_list[i]
-                break
-        # Pull the audio samples we'll use for training.
-        train_fingerprints, train_ground_truth = audio_processor.get_data(
-            FLAGS.batch_size, 0, model_settings, FLAGS.background_frequency,
-            FLAGS.background_volume, time_shift_samples, 'training', sess)
-        # Run the graph with this batch of training data.
-        train_summary, train_accuracy, cross_entropy_value, _, _ = sess.run(
-            [
-                merged_summaries, evaluation_step, cross_entropy_mean, train_step,
-                increment_global_step
-            ],
-            feed_dict={
-                fingerprint_input: train_fingerprints,
-                ground_truth_input: train_ground_truth,
-                learning_rate_input: learning_rate_value,
-                dropout_prob: 0.5
-            })
-        train_writer.add_summary(train_summary, training_step)
-        tf.logging.info('Step #%d: rate %f, accuracy %.1f%%, cross entropy %f' %
-                        (training_step, learning_rate_value, train_accuracy * 100,
-                         cross_entropy_value))
-        is_last_step = (training_step == training_steps_max)
+            evaluate_utils.record_wrong_predicted_file(logpath, files_path, predicted_words, write_label_flag=False, append_flag=append_flag)
 
-        ## validation. inside of training loop
-        if (training_step % FLAGS.eval_step_interval) == 0 or is_last_step:
-            set_size = audio_processor.set_size('validation')
-            total_accuracy = 0
-            total_conf_matrix = None
-            for i in xrange(0, set_size, FLAGS.batch_size):
-                validation_fingerprints, validation_ground_truth = (
-                    audio_processor.get_data(FLAGS.batch_size, i, model_settings, 0.0,
-                                             0.0, 0, 'validation', sess))
-                # Run a validation step and capture training summaries for TensorBoard
-                # with the `merged` op.
-                validation_summary, validation_accuracy, conf_matrix = sess.run(
-                    [merged_summaries, evaluation_step, confusion_matrix],
-                    feed_dict={
-                        fingerprint_input: validation_fingerprints,
-                        ground_truth_input: validation_ground_truth,
-                        dropout_prob: 1.0
-                    })
-                validation_writer.add_summary(validation_summary, training_step)
-                batch_size = min(FLAGS.batch_size, set_size - i)
-                total_accuracy += (validation_accuracy * batch_size) / set_size
-                if total_conf_matrix is None:
-                    total_conf_matrix = conf_matrix
-                else:
-                    total_conf_matrix += conf_matrix
-            tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
-            tf.logging.info('Step %d: Validation accuracy = %.1f%% (N=%d)' %
-                            (training_step, total_accuracy * 100, set_size))
+    if FLAGS.evaluate_validation_flag:
+        logpath = os.path.join(os.path.dirname(FLAGS.start_checkpoint),'validataon_result.csv')
+        set_size = audio_processor.set_size('validation')
+        tf.logging.info('set_size=%d', set_size)
+        total_accuracy = 0
+        total_conf_matrix = None
+        for i in xrange(0, set_size, FLAGS.batch_size):
+            fingerprints, ground_truth, files_path = audio_processor.get_data(
+                FLAGS.batch_size, i, model_settings, 0.0, 0.0, 0, 'testing', sess)
 
-        # Save the model checkpoint periodically.
-        if (training_step % FLAGS.save_step_interval == 0 or
-                training_step == training_steps_max):
-            checkpoint_path = os.path.join(FLAGS.train_dir,
-                                           FLAGS.model_architecture + '.ckpt')
-            tf.logging.info('Saving to "%s-%d"', checkpoint_path, training_step)
-            saver.save(sess, checkpoint_path, global_step=training_step)
+            accuracy, conf_matrix, predicted_label = sess.run(
+                [evaluation_step, confusion_matrix, predicted_indices],
+                feed_dict={
+                    fingerprint_input: fingerprints,
+                    ground_truth_input: ground_truth,
+                    dropout_prob: 1.0
+                })
 
-    set_size = audio_processor.set_size('testing')
-    tf.logging.info('set_size=%d', set_size)
-    total_accuracy = 0
-    total_conf_matrix = None
-    for i in xrange(0, set_size, FLAGS.batch_size):
-        test_fingerprints, test_ground_truth = audio_processor.get_data(
-            FLAGS.batch_size, i, model_settings, 0.0, 0.0, 0, 'testing', sess)
+            batch_size = min(FLAGS.batch_size, set_size - i)
+            total_accuracy += (accuracy * batch_size) / set_size
+            if total_conf_matrix is None:
+                total_conf_matrix = conf_matrix
+            else:
+                total_conf_matrix += conf_matrix
 
-        test_summary, test_accuracy, conf_matrix = sess.run(
-            [merged_summaries, evaluation_step, confusion_matrix],
-            feed_dict={
-                fingerprint_input: test_fingerprints,
-                ground_truth_input: test_ground_truth,
-                dropout_prob: 1.0
-            })
-        test_writer.add_summary(test_summary, training_step)
-        batch_size = min(FLAGS.batch_size, set_size - i)
-        total_accuracy += (test_accuracy * batch_size) / set_size
-        if total_conf_matrix is None:
-            total_conf_matrix = conf_matrix
-        else:
-            total_conf_matrix += conf_matrix
+            #tedious here. through predicted_label and ground truth. you will be able to print out the wrong testing file... write it down.
+            wrong_prediction = ~(ground_truth == predicted_label)
+            wav_path_wrong = [files_path[ii] for ii, wrongness in enumerate(wrong_prediction) if wrongness]
+            wav_prediction_wrong = [predicted_label[ii] for ii, wrongness in enumerate(wrong_prediction) if wrongness]
+            wav_prediction_wrong_words = [audio_processor.words_list[ii] for ii in wav_prediction_wrong]
+            wav_ground_truth_wrong = [ground_truth[ii] for ii, wrongness in enumerate(wrong_prediction) if wrongness]
+            wav_ground_truth_wrong_words = [audio_processor.words_list[int(ii)] for ii in wav_ground_truth_wrong]
+            # turn number into labels.
+            if i == 0:
+                append_flag = False
+            else:
+                append_flag = True
+            evaluate_utils.record_wrong_predicted_file(logpath, wav_path_wrong, wav_prediction_wrong_words,
+                                                       wav_ground_truth=wav_ground_truth_wrong_words, write_label_flag=True, append_flag=append_flag)
 
-    tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
-    tf.logging.info('Final test accuracy = %.1f%% (N=%d)' % (total_accuracy * 100,
-                                                             set_size))
+        tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
+        tf.logging.info('validatation accuracy = %.1f%% (N=%d)' % (total_accuracy * 100,
+                                                                 set_size))
 
 
 if __name__ == '__main__':
@@ -442,6 +366,29 @@ if __name__ == '__main__':
         type=bool,
         default=False,
         help='Whether to normalize the mfcc '
+    )
+    parser.add_argument(
+        '--evaluate_validation_flag',
+        type=bool,
+        default=True,
+        help='Evaluate validation set'
+    )
+    parser.add_argument(
+        '--evaluate_kaggle_test_flag',
+        type=bool,
+        default=False,
+        help='Evaluate validation set'
+    )
+    parser.add_argument(
+        '--submission_template_path',
+        type=str,
+        default='E:\Juyue\kaggle_speech_dataset\sample_submission.csv',
+        help='path for submission_sample_path'
+    )
+
+    parser.add_argument(
+    '--test_data_path', type = str, default = 'E:\Juyue\kaggle_speech_dataset\\test\\audio',
+    help = 'Path to test data'
     )
     FLAGS, unparsed = parser.parse_known_args()
     tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)

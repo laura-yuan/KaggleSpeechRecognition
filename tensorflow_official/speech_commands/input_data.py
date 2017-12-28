@@ -31,6 +31,7 @@ import numpy as np
 from six.moves import urllib
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
+import csv
 
 from tensorflow.contrib.framework.python.ops import audio_ops as contrib_audio
 from tensorflow.python.ops import io_ops
@@ -45,6 +46,12 @@ UNKNOWN_WORD_INDEX = 1
 BACKGROUND_NOISE_DIR_NAME = '_background_noise_'
 RANDOM_SEED = 59185
 
+def get_kaggle_test_file_list(submission_template_path):
+    with open(submission_template_path) as f:
+        data = csv.DictReader(f, delimiter=',')
+        file_list = [row['fname'] for row in data]
+
+    return file_list, len(file_list)
 
 def prepare_words_list(wanted_words):
   """Prepends common tokens to the custom word list.
@@ -57,6 +64,58 @@ def prepare_words_list(wanted_words):
   """
   return [SILENCE_LABEL, UNKNOWN_WORD_LABEL] + wanted_words
 
+def verification_utils_prepare_triplet(ground_truth_label, label_count = 12, num_of_triplets = 1000, hard_mode = False, predicted_label = None):
+    # should have same example.
+    ind_each_category = [np.nonzero(ll == ground_truth_label) for ll in range(label_count)]
+
+
+    if hard_mode :
+        # if a sample is predicted to be category A, then, this sample would be negative sample for category A.
+        correct_prediction = predicted_label == ground_truth_label
+        category_pair = np.asarray([[predicted_label[ii], ii] for ii, correct in enumerate(correct_prediction) if not correct])
+        rep_fold = max(num_of_triplets//category_pair.shape[0], 1) # at least one fold.
+        category_pair_rep = np.repeat(category_pair, rep_fold, axis=0)
+
+        anchor_category = category_pair_rep[:,0]
+        negative_array = category_pair_rep[:,1]
+
+    else:
+        anchor_category = np.random.randint(label_count, size=num_of_triplets)
+        negative_category = [np.random.choice(list(set(list(range(label_count))) - {anchor_this_category})) for
+                             anchor_this_category in anchor_category]
+        negative = [np.random.choice(ind_each_category[anchor_this_category][0], 1, ) for anchor_this_category in
+                    negative_category]
+        negative_array = np.asarray(negative)
+
+    anchor_and_positive = [np.random.choice(ind_each_category[anchor_this_category][0], 2, replace=False) for
+                           anchor_this_category in anchor_category]
+    anchor_and_positive_array = np.asarray(anchor_and_positive)
+
+    triplets = np.column_stack((anchor_and_positive_array, negative_array))
+
+
+    return triplets
+
+def rescale_figureprints(data_in):
+    ## hopefully this could be a better example.
+    with tf.name_scope('rescale_fingerprints'):
+        ## clip the data first
+        pct_thresh_low = tf.constant(5.0)
+        pct_thresh_high = tf.constant(97.5)
+        clip_low = tf.contrib.distributions.percentile(data_in, pct_thresh_low )
+        clip_high =  tf.contrib.distributions.percentile(data_in,  pct_thresh_high )
+        data_clip = tf.clip_by_value(data_in, clip_low, clip_high)
+
+        ## normalize the input.
+        data_clip_reshape = tf.reshape(data_clip, (tf.size(data_clip), 1))
+
+        data_mean, data_variance = tf.nn.moments(data_clip_reshape, 0)
+        data_centered = tf.subtract(data_clip, data_mean)
+        eps = tf.constant(0.0000001)
+        data_divider = tf.maximum(tf.reduce_max(tf.abs(data_centered)), eps)
+        data_out_norm = tf.divide(data_centered, data_divider)
+#      data_out_norm = data_out
+    return data_out_norm
 
 def which_set(filename, validation_percentage, testing_percentage):
   """Determines which data partition the file should belong to.
@@ -346,11 +405,13 @@ class AudioProcessor(object):
     Args:
       model_settings: Information about the current model being trained.
     """
+    mfcc_normalization_flag = model_settings['mfcc_normalization_flag']
     desired_samples = model_settings['desired_samples']
     self.wav_filename_placeholder_ = tf.placeholder(tf.string, [])
     wav_loader = io_ops.read_file(self.wav_filename_placeholder_)
     wav_decoder = contrib_audio.decode_wav(
         wav_loader, desired_channels=1, desired_samples=desired_samples)
+
     # Allow the audio sample's volume to be adjusted.
     self.foreground_volume_placeholder_ = tf.placeholder(tf.float32, [])
     scaled_foreground = tf.multiply(wav_decoder.audio,
@@ -372,18 +433,35 @@ class AudioProcessor(object):
     background_mul = tf.multiply(self.background_data_placeholder_,
                                  self.background_volume_placeholder_)
     background_add = tf.add(background_mul, sliced_foreground)
-    background_clamp = tf.clip_by_value(background_add, -1.0, 1.0)
-    
+    background_clamp = background_add
     # Run the spectrogram and MFCC ops to get a 2D 'fingerprint' of the audio.
-    spectrogram = contrib_audio.audio_spectrogram(
+    if mfcc_normalization_flag:
+      # do not clip audio.
+      spectrogram = contrib_audio.audio_spectrogram(
         background_clamp,
         window_size=model_settings['window_size_samples'],
         stride=model_settings['window_stride_samples'],
         magnitude_squared=True)
-    self.mfcc_ = contrib_audio.mfcc(
+
+      mfcc_before_normalization = contrib_audio.mfcc(
+          spectrogram,
+          wav_decoder.sample_rate,
+          dct_coefficient_count=model_settings['dct_coefficient_count'])
+      ## normalize the mfcc. clip-->center-->norm
+      self.mfcc_ = rescale_figureprints(mfcc_before_normalization)
+    else:
+      background_clamp = tf.clip_by_value(background_add, -1.0, 1.0) # normalize here.
+      # Run the spectrogram and MFCC ops to get a 2D 'fingerprint' of the audio.
+      spectrogram = contrib_audio.audio_spectrogram(
+        background_clamp,
+        window_size=model_settings['window_size_samples'],
+        stride=model_settings['window_stride_samples'],
+        magnitude_squared=True)
+      self.mfcc_ = contrib_audio.mfcc(
         spectrogram,
         wav_decoder.sample_rate,
         dct_coefficient_count=model_settings['dct_coefficient_count'])
+    
 
   def set_size(self, mode):
     """Calculates the number of samples in the dataset partition.
@@ -395,6 +473,58 @@ class AudioProcessor(object):
       Number of samples in the partition.
     """
     return len(self.data_index[mode])
+
+  def get_data_kaggle_test(self, how_many, offset, model_settings, submission_template_path, kaggle_test_data_path, sess):
+    """Gather samples from the data set, applying transformations as needed.
+
+    When the mode is 'training', a random selection of samples will be returned,
+    otherwise the first N clips in the partition will be used. This ensures that
+    validation always uses the same samples, reducing noise in the metrics.
+
+    Args:
+      how_many: Desired number of samples to return. -1 means the entire
+        contents of this partition.
+      offset: Where to start when fetching deterministically.
+      model_settings: Information about the current model being trained.
+      sess: TensorFlow session that was active when processor was created.
+
+    Returns:
+      List of sample data for the transformed samples, and list of label indexes
+      also return the file names? so that you can check on them later on?
+    """
+    # Pick one of the partitions to choose samples from.
+    file_list_all,_, = get_kaggle_test_file_list(submission_template_path)
+    sample_count = max(0, min(how_many, len(file_list_all) - offset))
+    # Data, labels and file location will be populated and returned.
+    data = np.zeros((sample_count, model_settings['fingerprint_size']))
+    labels = np.zeros(sample_count)
+    file_list = [None for i in range(sample_count)]
+
+    desired_samples = model_settings['desired_samples']
+    # Use the processing graph we created earlier to repeatedly to generate the
+    # final output sample data we'll use in training.
+    time_shift_amount = 0
+    time_shift_padding = [[0, -time_shift_amount], [0, 0]]
+    time_shift_offset = [-time_shift_amount, 0]
+
+    for i in xrange(offset, offset + sample_count):
+      # Pick which audio sample to use.
+      sample_index = i
+      file_full_path = os.path.join(kaggle_test_data_path, file_list_all[sample_index])
+      input_dict = {
+          self.wav_filename_placeholder_: file_full_path,
+          self.time_shift_padding_placeholder_: time_shift_padding,
+          self.time_shift_offset_placeholder_: time_shift_offset,
+          self.background_data_placeholder_:np.zeros([desired_samples, 1]),
+          self.background_volume_placeholder_:0,
+          self.foreground_volume_placeholder_:1
+      }
+      # Run the graph to produce the output audio.
+      data[i - offset, :] = sess.run(self.mfcc_, feed_dict=input_dict).flatten()
+      labels[i - offset] = 0
+      file_list[i - offset] = file_list_all[i]
+
+    return data, labels, file_list
 
   def get_data(self, how_many, offset, model_settings, background_frequency,
                background_volume_range, time_shift, mode, sess):
@@ -419,6 +549,7 @@ class AudioProcessor(object):
 
     Returns:
       List of sample data for the transformed samples, and list of label indexes
+      also return the file names? so that you can check on them later on?
     """
     # Pick one of the partitions to choose samples from.
     candidates = self.data_index[mode]
@@ -426,9 +557,11 @@ class AudioProcessor(object):
       sample_count = len(candidates)
     else:
       sample_count = max(0, min(how_many, len(candidates) - offset))
-    # Data and labels will be populated and returned.
+    # Data, labels and file location will be populated and returned.
     data = np.zeros((sample_count, model_settings['fingerprint_size']))
     labels = np.zeros(sample_count)
+    files_path = [None for ii in range(sample_count)]
+
     desired_samples = model_settings['desired_samples']
     use_background = self.background_data and (mode == 'training')
     pick_deterministically = (mode != 'training')
@@ -480,11 +613,15 @@ class AudioProcessor(object):
         input_dict[self.foreground_volume_placeholder_] = 0
       else:
         input_dict[self.foreground_volume_placeholder_] = 1
+
       # Run the graph to produce the output audio.
       data[i - offset, :] = sess.run(self.mfcc_, feed_dict=input_dict).flatten()
       label_index = self.word_to_index[sample['label']]
       labels[i - offset] = label_index
-    return data, labels
+
+      files_path[i - offset] = sample['file']
+
+    return data, labels, files_path
 
   def get_unprocessed_data(self, how_many, model_settings, mode):
     """Retrieve sample data for the given partition, with no transformations.
