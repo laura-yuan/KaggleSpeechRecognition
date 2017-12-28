@@ -278,9 +278,9 @@ def main(_):
                      train_cross_entropy_value))
     is_last_step = (training_step == training_steps_max)
     
-    # create training set for encoding session.
-    easy_triplets = input_data.verification_utils_prepare_triplet(train_ground_truth, hard_mode=False, num_of_triplets=FLAGS.batch_size)
-    hard_triplets = input_data.verification_utils_prepare_triplet(train_ground_truth, hard_mode=True, num_of_triplets=FLAGS.batch_size, predicted_label=predicted_value)
+    # # create training set for encoding session.
+    # easy_triplets = input_data.verification_utils_prepare_triplet(train_ground_truth, hard_mode=False, num_of_triplets=FLAGS.batch_size)
+    # hard_triplets = input_data.verification_utils_prepare_triplet(train_ground_truth, hard_mode=True, num_of_triplets=FLAGS.batch_size, predicted_label=predicted_value)
 
     # define encoding.
 
@@ -363,7 +363,7 @@ def main(_):
     else:
       total_conf_matrix += validation_confusion_matrix
 
-  test_summary_jy.update(training_step - 1, total_accuracy, total_entropy, total_conf_matrix,
+  test_summary_jy.update(0, total_accuracy, total_entropy, total_conf_matrix,
                                  learning_rate_value)
   test_summary_jy.save(jy_summary_test_path)
 
@@ -494,8 +494,8 @@ if __name__ == '__main__':
   parser.add_argument(
       '--wanted_words',
       type=str,
-      # default='yes,no,up,down,left,right,on,off,stop,go',
-      default='yes,no,up,down,left,rught,on,off,stop,go,bed,zero,one,two,three,four,five,six,seven,eight,nine,marvin,sheila,wow,bird,cat,dog,happy,house,',
+      default='yes,no,up,down,left,right,on,off,stop,go',
+      # default='yes,no,up,down,left,rught,on,off,stop,go,bed,zero,one,two,three,four,five,six,seven,eight,nine,marvin,sheila,wow,bird,cat,dog,happy,house,',
       help='Words to use (others will be added to an unknown label)',)
   parser.add_argument(
       '--train_dir',
@@ -538,7 +538,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--yihu_log',
       type = str,
-      default = '/tmp/yihu_log.txt',
+      default = 'E:\Juyue\\tmp\yihu_log.txt',
       help = 'Where to save the summary text logs')
   FLAGS, unparsed = parser.parse_known_args()
   tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)

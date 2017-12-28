@@ -689,7 +689,7 @@ def create_model_conv_replicate(fingerprint_input, model_settings, is_training):
     param[0]['nonlinear_act'] = tf.nn.relu
     param[0]['is_pooling_flag'] = True
     param[0]['pooling_act'] = tf.nn.max_pool
-    param[0]['is_batch_normalization_flag'] = True
+    param[0]['is_batch_normalization_flag'] = False
 
     param[1]['F'] = [10, 4, 64, 64]
     param[1]['F_stride'] = [1, 1, 1, 1]
@@ -698,7 +698,7 @@ def create_model_conv_replicate(fingerprint_input, model_settings, is_training):
     param[1]['nonlinear_act'] = tf.nn.relu
     param[1]['is_pooling_flag'] = False
     param[1]['pooling_act'] = tf.nn.max_pool
-    param[1]['is_batch_normalization_flag'] = True
+    param[1]['is_batch_normalization_flag'] = False
 
 
     dropout_prob = tf.placeholder(dtype=tf.float32, name='dropout')
