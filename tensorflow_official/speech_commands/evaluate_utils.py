@@ -25,3 +25,14 @@ def eliminate_underscore(word):
         return  'silence'
     else:
         return word
+def unwanted_word_to_unknown(word):
+    wanted_words = ['_silence_','_unknown_','silence','unknown','yes','no','up','down','left','right','on','off','stop','go']
+    if word in wanted_words:
+        return word
+    else:
+        return 'unknown'
+    return
+def unwanted_label_to_unknown(label):
+    wanted_words = ['_silence_','_unknown_','yes','no','up','down','left','right','on','off','stop','go']
+    if label <12:
+        return label

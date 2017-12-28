@@ -25,7 +25,7 @@ import tensorflow as tf
 
 def prepare_model_settings(label_count, sample_rate, clip_duration_ms,
                            window_size_ms, window_stride_ms,
-                           dct_coefficient_count, mfcc_normalization_flag):
+                           dct_coefficient_count, mfcc_normalization_flag, batch_normalization_flag):
   """Calculates common settings needed for all models.
 
   Args:
@@ -57,7 +57,8 @@ def prepare_model_settings(label_count, sample_rate, clip_duration_ms,
       'fingerprint_size': fingerprint_size,
       'label_count': label_count,
       'sample_rate': sample_rate,
-      'mfcc_normalization_flag': mfcc_normalization_flag
+      'mfcc_normalization_flag': mfcc_normalization_flag,
+      'batch_normalization_flag':batch_normalization_flag
   }
 
 
@@ -129,7 +130,7 @@ def load_variables_from_checkpoint(sess, start_checkpoint):
   saver.restore(sess, start_checkpoint)
 
 
-def conv_layer_full(X, dropout_prob, F, F_stride, M, M_stride, layer_name, is_training_flag=None,
+def conv_layer_full(X, dropout_prob, is_training_flag, F, F_stride, M, M_stride, layer_name,
                is_batch_normalization_flag=False, is_pooling_flag=None,
                nonlinear_act=tf.nn.relu, pooling_act=tf.nn.max_pool,
                use_cudnn_on_gpu=False):
@@ -689,7 +690,7 @@ def create_model_conv_replicate(fingerprint_input, model_settings, is_training):
     param[0]['nonlinear_act'] = tf.nn.relu
     param[0]['is_pooling_flag'] = True
     param[0]['pooling_act'] = tf.nn.max_pool
-    param[0]['is_batch_normalization_flag'] = False
+    param[0]['is_batch_normalization_flag'] = model_settings['batch_normalization_flag']
 
     param[1]['F'] = [10, 4, 64, 64]
     param[1]['F_stride'] = [1, 1, 1, 1]
@@ -698,10 +699,11 @@ def create_model_conv_replicate(fingerprint_input, model_settings, is_training):
     param[1]['nonlinear_act'] = tf.nn.relu
     param[1]['is_pooling_flag'] = False
     param[1]['pooling_act'] = tf.nn.max_pool
-    param[1]['is_batch_normalization_flag'] = False
+    param[1]['is_batch_normalization_flag'] = model_settings['batch_normalization_flag']
 
 
     dropout_prob = tf.placeholder(dtype=tf.float32, name='dropout')
+    is_training_flag = tf.placeholder(dtype=tf.bool, name='is_training_flag')
     input_frequency_size = model_settings['dct_coefficient_count']
     input_time_size = model_settings['spectrogram_length']
     fingerprint_4d = tf.reshape(fingerprint_input,
@@ -722,8 +724,7 @@ def create_model_conv_replicate(fingerprint_input, model_settings, is_training):
         is_pooling_flag = parameters['is_pooling_flag']
         pooling_act = parameters['pooling_act']
 
-        input_layer[ii + 1] = conv_layer_full(input_layer[ii], dropout_prob, F, F_stride, M, M_stride, layer_name,
-                             is_training_flag=is_training,
+        input_layer[ii + 1] = conv_layer_full(input_layer[ii], dropout_prob, is_training_flag, F, F_stride, M, M_stride, layer_name,
                              is_batch_normalization_flag=is_batch_normalization_flag, is_pooling_flag=is_pooling_flag,
                              nonlinear_act=nonlinear_act, pooling_act=pooling_act,
                              use_cudnn_on_gpu=False)
@@ -737,7 +738,7 @@ def create_model_conv_replicate(fingerprint_input, model_settings, is_training):
         final_fc_logits = tf.contrib.layers.fully_connected(last_layer, label_count, activation_fn=None)
 
     if is_training:
-        return final_fc_logits,  dropout_prob
+        return final_fc_logits,  dropout_prob, is_training_flag
     else:
         return final_fc_logits
 

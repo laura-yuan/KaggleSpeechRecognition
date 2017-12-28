@@ -95,7 +95,7 @@ def main(_):
     model_settings = models.prepare_model_settings(
         len(input_data.prepare_words_list(FLAGS.wanted_words.split(','))),
         FLAGS.sample_rate, FLAGS.clip_duration_ms, FLAGS.window_size_ms,
-        FLAGS.window_stride_ms, FLAGS.dct_coefficient_count, FLAGS.mfcc_normalization_flag)
+        FLAGS.window_stride_ms, FLAGS.dct_coefficient_count, FLAGS.mfcc_normalization_flag, FLAGS.batch_normalization_flag)
     audio_processor = input_data.AudioProcessor(
         FLAGS.data_url, FLAGS.data_dir, FLAGS.silence_percentage,
         FLAGS.unknown_percentage,
@@ -109,7 +109,7 @@ def main(_):
     fingerprint_input = tf.placeholder(
         tf.float32, [None, fingerprint_size], name='fingerprint_input')
 
-    logits, dropout_prob = models.create_model(
+    logits, dropout_prob, is_training_flag = models.create_model(
         fingerprint_input,
         model_settings,
         FLAGS.model_architecture,
@@ -162,7 +162,8 @@ def main(_):
                 feed_dict={
                     fingerprint_input: fingerprints,
                     ground_truth_input: ground_truth,
-                    dropout_prob: 1.0
+                    dropout_prob: 1.0,
+                    is_training_flag: True
                 })
            # turn number into labels.
             if i == 0:
@@ -172,7 +173,6 @@ def main(_):
             # actually, only relative path...how
             my_words_list = [evaluate_utils.eliminate_underscore(word) for word in audio_processor.words_list]
             predicted_words = [my_words_list[ii] for ii in predicted_label]
-
             evaluate_utils.record_wrong_predicted_file(logpath, files_path, predicted_words, write_label_flag=False, append_flag=append_flag)
 
     if FLAGS.evaluate_validation_flag:
@@ -190,7 +190,8 @@ def main(_):
                 feed_dict={
                     fingerprint_input: fingerprints,
                     ground_truth_input: ground_truth,
-                    dropout_prob: 1.0
+                    dropout_prob: 1.0,
+                    is_training_flag: True
                 })
 
             batch_size = min(FLAGS.batch_size, set_size - i)
@@ -200,6 +201,7 @@ def main(_):
             else:
                 total_conf_matrix += conf_matrix
 
+            # report two accuracy. short_word_list. and orginial word_list.
             #tedious here. through predicted_label and ground truth. you will be able to print out the wrong testing file... write it down.
             wrong_prediction = ~(ground_truth == predicted_label)
             wav_path_wrong = [files_path[ii] for ii, wrongness in enumerate(wrong_prediction) if wrongness]
@@ -214,6 +216,8 @@ def main(_):
                 append_flag = True
             evaluate_utils.record_wrong_predicted_file(logpath, wav_path_wrong, wav_prediction_wrong_words,
                                                        wav_ground_truth=wav_ground_truth_wrong_words, write_label_flag=True, append_flag=append_flag)
+
+            # accuracy list when the word list is short. give it a try.
 
         tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
         tf.logging.info('validatation accuracy = %.1f%% (N=%d)' % (total_accuracy * 100,
@@ -368,6 +372,13 @@ if __name__ == '__main__':
         help='Whether to normalize the mfcc '
     )
     parser.add_argument(
+        '--batch_normalization_flag',
+        type=bool,
+        default=False,
+        help='Whether to do batch normalization '
+    )
+
+    parser.add_argument(
         '--evaluate_validation_flag',
         type=bool,
         default=True,
@@ -390,5 +401,6 @@ if __name__ == '__main__':
     '--test_data_path', type = str, default = 'E:\Juyue\kaggle_speech_dataset\\test\\audio',
     help = 'Path to test data'
     )
+
     FLAGS, unparsed = parser.parse_known_args()
     tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
