@@ -231,7 +231,7 @@ def main(_):
 
 
     # Run the graph with this batch of training data.
-    train_summary, train_accuracy, cross_entropy_value, train_confus_matrix, predicted_value, _, _ = sess.run(
+    train_summary, train_accuracy, train_cross_entropy_value, train_confusion_matrix, predicted_value, _, _ = sess.run(
         [
             merged_summaries, evaluation_step, cross_entropy_mean, confusion_matrix, predicted_indices, train_step,
                 increment_global_step
@@ -245,11 +245,11 @@ def main(_):
 
     train_writer.add_summary(train_summary, training_step)
     # you should write your own function to store the basic training information.
-    train_summary_jy.update(training_step, train_accuracy, cross_entropy_value, train_confus_matrix, learning_rate_value)
+    train_summary_jy.update(training_step, train_accuracy, train_cross_entropy_value, train_confusion_matrix, learning_rate_value)
 
     tf.logging.info('Step #%d: rate %f, accuracy %.1f%%, cross entropy %f' %
                     (training_step, learning_rate_value, train_accuracy * 100,
-                     cross_entropy_value))
+                     train_cross_entropy_value))
     is_last_step = (training_step == training_steps_max)
     
     # create training set for encoding session.
@@ -271,7 +271,7 @@ def main(_):
                                      0.0, 0, 'validation', sess))
         # Run a validation step and capture training summaries for TensorBoard
         # with the `merged` op.
-        validation_summary, validation_accuracy, validate_cross_entropy_value,validate_confus_matrix = sess.run(
+        validation_summary, validation_accuracy, validation_cross_entropy_value, validation_confusion_matrix = sess.run(
             [merged_summaries, evaluation_step, cross_entropy_mean,confusion_matrix],
             feed_dict={
                 fingerprint_input: validation_fingerprints,
@@ -281,11 +281,11 @@ def main(_):
         validation_writer.add_summary(validation_summary, training_step)
         batch_size = min(FLAGS.batch_size, set_size - i)
         total_accuracy += (validation_accuracy * batch_size) / set_size
-        total_entropy  += (validate_cross_entropy_value * batch_size)/set_size
+        total_entropy  += (validation_cross_entropy_value * batch_size)/set_size
         if total_conf_matrix is None:
-          total_conf_matrix = validate_confus_matrix
+          total_conf_matrix = validation_confusion_matrix
         else:
-          total_conf_matrix += validate_confus_matrix
+          total_conf_matrix += validation_confusion_matrix
       tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
       tf.logging.info('Step %d: Validation accuracy = %.1f%% (N=%d)' %
                       (training_step, total_accuracy * 100, set_size))
@@ -304,12 +304,13 @@ def main(_):
   tf.logging.info('set_size=%d', set_size)
   total_accuracy = 0
   total_conf_matrix = None
+  total_entropy = 0
   for i in xrange(0, set_size, FLAGS.batch_size):
     test_fingerprints, test_ground_truth, _ = audio_processor.get_data(
         FLAGS.batch_size, i, model_settings, 0.0, 0.0, 0, 'testing', sess)
         
-    test_summary, test_accuracy, test_cross_entropy_value, test_confus_matrix = sess.run(
-        [merged_summaries, evaluation_step,cross_entropy_mean, confusion_matrix],
+    test_summary, test_accuracy, test_cross_entropy_value, test_confusion_matrix = sess.run(
+        [merged_summaries, evaluation_step, cross_entropy_mean, confusion_matrix],
         feed_dict={
             fingerprint_input: test_fingerprints,
             ground_truth_input: test_ground_truth,
@@ -318,11 +319,15 @@ def main(_):
     test_writer.add_summary(test_summary, training_step)
     batch_size = min(FLAGS.batch_size, set_size - i)
     total_accuracy += (test_accuracy * batch_size) / set_size
+    total_entropy += (test_cross_entropy_value * batch_size) /set_size
     if total_conf_matrix is None:
-      total_conf_matrix = validate_confus_matrix
+      total_conf_matrix = validation_confusion_matrix
     else:
-      total_conf_matrix += validate_confus_matrix
-    
+      total_conf_matrix += validation_confusion_matrix
+
+    test_summary_jy.update(training_step, total_accuracy, total_entropy, total_conf_matrix,
+                                 learning_rate_value)
+
   tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
   tf.logging.info('Final test accuracy = %.1f%% (N=%d)' % (total_accuracy * 100,
                                                            set_size))
