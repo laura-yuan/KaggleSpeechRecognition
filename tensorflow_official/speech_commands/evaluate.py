@@ -146,11 +146,37 @@ def main(_):
         models.load_variables_from_checkpoint(sess, FLAGS.start_checkpoint)
         start_step = global_step.eval(session=sess)
     ## use the start_checkpoint. save the test csv under the same file.
-        logpath = os.path.join(os.path.dirname(FLAGS.start_checkpoint),'validataon_result.csv')
     tf.logging.info('Network result from step: %d training', start_step)
 
 
+    if FLAGS.evaluate_kaggle_test_flag:
+        logpath = os.path.join(os.path.dirname(FLAGS.start_checkpoint), 'kaggle_test.csv')
+        _, set_size = input_data.get_kaggle_test_file_list(FLAGS.submission_template_path)
+        tf.logging.info('kaggle test set_size=%d', set_size)
+        for i in xrange(0, set_size, FLAGS.batch_size):
+            fingerprints, ground_truth, files_path = audio_processor.get_data_kaggle_test(
+                FLAGS.batch_size, i, model_settings, FLAGS.submission_template_path, FLAGS.test_data_path, sess)
+
+            predicted_label = sess.run(
+                predicted_indices,
+                feed_dict={
+                    fingerprint_input: fingerprints,
+                    ground_truth_input: ground_truth,
+                    dropout_prob: 1.0
+                })
+           # turn number into labels.
+            if i == 0:
+                append_flag = False
+            else:
+                append_flag = True
+            # actually, only relative path...how
+            my_words_list = [evaluate_utils.eliminate_underscore(word) for word in audio_processor.words_list]
+            predicted_words = [my_words_list[ii] for ii in predicted_label]
+
+            evaluate_utils.record_wrong_predicted_file(logpath, files_path, predicted_words, write_label_flag=False, append_flag=append_flag)
+
     if FLAGS.evaluate_validation_flag:
+        logpath = os.path.join(os.path.dirname(FLAGS.start_checkpoint),'validataon_result.csv')
         set_size = audio_processor.set_size('validation')
         tf.logging.info('set_size=%d', set_size)
         total_accuracy = 0
@@ -173,7 +199,8 @@ def main(_):
                 total_conf_matrix = conf_matrix
             else:
                 total_conf_matrix += conf_matrix
-            # through predicted_label and ground truth. you will be able to print out the wrong testing file... write it down.
+
+            #tedious here. through predicted_label and ground truth. you will be able to print out the wrong testing file... write it down.
             wrong_prediction = ~(ground_truth == predicted_label)
             wav_path_wrong = [files_path[ii] for ii, wrongness in enumerate(wrong_prediction) if wrongness]
             wav_prediction_wrong = [predicted_label[ii] for ii, wrongness in enumerate(wrong_prediction) if wrongness]
@@ -186,7 +213,7 @@ def main(_):
             else:
                 append_flag = True
             evaluate_utils.record_wrong_predicted_file(logpath, wav_path_wrong, wav_prediction_wrong_words,
-                                                       wav_ground_truth_wrong_words, write_label_flag=True, append_flag=append_flag)
+                                                       wav_ground_truth=wav_ground_truth_wrong_words, write_label_flag=True, append_flag=append_flag)
 
         tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
         tf.logging.info('validatation accuracy = %.1f%% (N=%d)' % (total_accuracy * 100,
@@ -351,6 +378,17 @@ if __name__ == '__main__':
         type=bool,
         default=False,
         help='Evaluate validation set'
+    )
+    parser.add_argument(
+        '--submission_template_path',
+        type=str,
+        default='E:\Juyue\kaggle_speech_dataset\sample_submission.csv',
+        help='path for submission_sample_path'
+    )
+
+    parser.add_argument(
+    '--test_data_path', type = str, default = 'E:\Juyue\kaggle_speech_dataset\\test\\audio',
+    help = 'Path to test data'
     )
     FLAGS, unparsed = parser.parse_known_args()
     tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
