@@ -19,6 +19,7 @@ python train.py \
 --summaries_dir=/home/yihu/DB/KAGGLE/Tensorflow_Speech/results/tmp_mfcc_${MY_DCT}_${MY_WINDOW}_${MY_STRIDE}/retrain_logs \
 --save_step_interval=50 \
 --model_architecture=conv \
+--yihu_log=/home/yihu/DB/KAGGLE/Tensorflow_Speech/results/yihu_mfcc_log.txt
 
        MY_STRIDE=`expr $MY_STRIDE + 10`
     done

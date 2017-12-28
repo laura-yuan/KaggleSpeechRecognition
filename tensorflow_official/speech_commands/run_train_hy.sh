@@ -1,12 +1,13 @@
 python train.py \
 --data_dir=/home/yihu/DB/KAGGLE/Tensorflow_Speech/speech_dataset \
---how_many_training_steps=800,500,500 \
---learning_rate=0.001,0.0005,0.0001 \
+--how_many_training_steps=100 \
+--learning_rate=0.001 \
 --batch_size=100 \
 --dct_coefficient_count=13 \
 --window_size_ms=20 \
 --window_stride_ms=10 \
---train_dir=/home/yihu/DB/KAGGLE/Tensorflow_Speech/results/tmp_13_20_10/speech_commands_train \
---summaries_dir=/home/yihu/DB/KAGGLE/Tensorflow_Speech/results/tmp_13_20_10/retrain_logs \
+--train_dir=/home/yihu/DB/KAGGLE/Tensorflow_Speech/results/tmp_debug/speech_commands_train \
+--summaries_dir=/home/yihu/DB/KAGGLE/Tensorflow_Speech/results/tmp_debug/retrain_logs \
 --save_step_interval=50 \
---model_architecture=conv
+--model_architecture=conv \
+--yihu_log=/home/yihu/DB/KAGGLE/Tensorflow_Speech/results/yihu_log_debug.txt
