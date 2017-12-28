@@ -128,6 +128,55 @@ def load_variables_from_checkpoint(sess, start_checkpoint):
   saver.restore(sess, start_checkpoint)
 
 
+def conv_layer_full(X, dropout_prob, F, F_stride, M, M_stride, layer_name, is_training_flag=None,
+               is_batch_normalization_flag=False, is_pooling_flag=None,
+               nonlinear_act=tf.nn.relu, pooling_act=tf.nn.max_pool,
+               use_cudnn_on_gpu=False):
+    """
+    Reusable code for making a simple neural net layer --  convolution part
+    It does a matrix multiply, bias add, and then uses relu to nonlinearize.
+    It also sets up name scoping so that the resultant graph is easy to read,
+    and adds a number of summary ops.
+
+    Arguments:
+    X -- input tensor of shape (m, n_H_prev, n_W_prev, n_C_prev)
+    f -- integer, specifying the shape of the middle CONV's window [height, width, channel_prev, channel_curr]
+
+    Returns:
+    Y -- output of this layer, tensor of shape (m, n_H, n_W, n_C)
+
+    """
+    with tf.name_scope(layer_name):
+
+        # convolution
+        with tf.variable_scope(layer_name):
+            W = tf.get_variable('weight', F, initializer=tf.contrib.layers.xavier_initializer())
+            B = tf.get_variable('bias', F[3], initializer=tf.zeros_initializer())
+
+        Z = tf.add(tf.nn.conv2d(X, W, strides=F_stride, padding='VALID', use_cudnn_on_gpu=use_cudnn_on_gpu), B,
+                   name='preactivation')
+
+        # batch normalization
+        with tf.variable_scope(layer_name):
+            if is_batch_normalization_flag:
+                Z_batch = tf.layers.batch_normalization(Z, axis = 0, center=False, scale=False, training=is_training_flag)
+            else:
+                Z_batch = Z
+
+        # nonlinearity
+        A = nonlinear_act(Z_batch, name='activation')
+
+        # dropout.
+        hidden_dropout = tf.nn.dropout(A, dropout_prob, name='hidden_dropout')
+
+        # pooling.
+        if is_pooling_flag:
+            maxpool = pooling_act(hidden_dropout, ksize=M, strides=M_stride, padding='SAME', name='max_pooling')
+        else:
+            maxpool = hidden_dropout
+
+    return maxpool
+
 def create_single_fc_model(fingerprint_input, model_settings, is_training):
   """Builds a model with a single hidden fully-connected layer.
 
@@ -581,7 +630,7 @@ def conv_layer(X, f, strides, layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False
     X -- input tensor of shape (m, n_H_prev, n_W_prev, n_C_prev)
     f -- integer, specifying the shape of the middle CONV's window [20, 8, 1, 64]
     block -- string/character, used to name the layers, depending on their position in the network
-    
+
     Returns:
     Y -- output of the identity block, tensor of shape (n_H, n_W, n_C)
 
@@ -591,12 +640,12 @@ def conv_layer(X, f, strides, layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False
         B = tf.get_variable('bias', f[3], initializer= tf.zeros_initializer())
         Z = tf.nn.conv2d(X, W, strides = strides, padding = 'VALID', use_cudnn_on_gpu = use_cudnn_on_gpu, name = 'preactivation') + B
         A = act(Z, name = 'activation')
-        
+
 #     variable_summaries(W, 'weight')
 #     variable_summaries(B, 'bias')
 #     variable_summaries(Z,'preactivation')
 #     variable_summaries(A,'activation')
-        
+
     return A
 
 
@@ -629,6 +678,69 @@ def triplet_loss(y_pred, alpha=0.2):
     ### END CODE HERE ###
 
     return loss
+def create_model_conv_replicate(fingerprint_input, model_settings, is_training):
+    param = [None for ii in range(2)]
+    param[0].parameters['F'] = [20, 8, 1, 64]
+    param[0].parameters['F_strides1'] = [1,1,1,1]
+    param[0].parameters['M'] = [1, 2, 2, 1]
+    param[0].parameters['M_stride'] = [1, 2, 2, 1]
+    param[0].parameters['nonlinear_act'] = tf.nn.relu
+    param[0].parameters['is_pooling_flag'] = True
+    param[0].parameters['pooling_act'] = tf.nn.max_pool
+    param[0].parameters['is_batch_normalization_flag'] = True
+
+    param[1].parameters['F'] = [10, 4, 64, 64]
+    param[1]['F_stride'] = [1, 1, 1, 1]
+    param[1]['M'] = [1, 2, 2, 1]
+    param[1]['M_stride'] = [1, 2, 2, 1]
+    param[1].parameters['nonlinear_act'] = tf.nn.relu
+    param[1].parameters['is_pooling_flag'] = False
+    param[1].parameters['pooling_act'] = tf.nn.max_pool
+    param[1].parameters['is_batch_normalization_flag'] = True
+
+
+    dropout_prob = tf.placeholder(dtype=tf.float32, name='dropout')
+    input_frequency_size = model_settings['dct_coefficient_count']
+    input_time_size = model_settings['spectrogram_length']
+    fingerprint_4d = tf.reshape(fingerprint_input,
+                                [-1, input_time_size, input_frequency_size, 1])
+    n_layer = len(param)
+    input_layer = [None for ii in range(n_layer)]
+    input_layer[0] = fingerprint_4d
+
+    for ii in range(n_layer):
+        layer_name = 'L' + str(ii + 1)
+        parameters = param[ii]
+        F = parameters['F']
+        F_stride = parameters['F_stride']
+        M = parameters['M']
+        M_stride = parameters['M_stride']
+        nonlinear_act = parameters['nonlinear_act']
+        is_batch_normalization_flag = parameters['is_batch_normalization_flag']
+        is_pooling_flag = parameters['is_pooling_flag']
+        pooling_act = parameters['pooling_act']
+
+        input_layer[ii + 1] = conv_layer_full(input_layer[ii], dropout_prob, F, F_stride, M, M_stride, layer_name,
+                             is_training_flag=is_training,
+                             is_batch_normalization_flag=is_batch_normalization_flag, is_pooling_flag=is_pooling_flag,
+                             nonlinear_act=nonlinear_act, pooling_act=pooling_act,
+                             use_cudnn_on_gpu=False)
+    output_X = input_layer[-1]
+
+    with tf.name_scope('fully_connected'):
+        label_count = model_settings['label_count']
+        last_layer = tf.contrib.layers.flatten(output_X)
+
+    with tf.name_scope('logits'):
+        final_fc_logits = tf.contrib.layers.fully_connected(last_layer, label_count, activation_fn=None)
+
+    if is_training:
+        return final_fc_logits,  dropout_prob
+    else:
+        return final_fc_logits
+
+
+
 def create_model_conv_shallow(fingerprint_input, model_settings, is_training):
     if is_training:
       dropout_prob = tf.placeholder(tf.float32, name='dropout_prob')
