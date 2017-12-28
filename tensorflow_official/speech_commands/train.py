@@ -105,6 +105,10 @@ class jy_summary:
 
 
 def main(_):
+  # ****** Modified by Yi Hu ******
+  yh_log = open(FLAGS.yihu_log, 'a')
+  yh_log.write("********************************************************\n")
+  yh_log.write(FLAGS.summaries_dir + '\n')
   # We want to see all the logging messages for this tutorial.
   tf.logging.set_verbosity(tf.logging.INFO)
   sess = tf.InteractiveSession()
@@ -315,6 +319,14 @@ def main(_):
       validation_summary_jy.update(training_step - 1, total_accuracy, total_entropy, total_conf_matrix,
                               learning_rate_value)
 
+      # ****** Modified by Yi Hu ******
+      yh_log.write('**************** Validation **************** \n')
+      yh_log.write('Confusion Matrix:\n %s \n' % (total_conf_matrix))
+      yh_log.write(
+          'Step %d: Validation accuracy = %.1f%% (N=%d) \n' % (training_step, total_accuracy * 100, set_size))
+
+
+
     # Save the model checkpoint periodically.
     if (training_step % FLAGS.save_step_interval == 0 or
         training_step == training_steps_max):
@@ -358,6 +370,14 @@ def main(_):
   tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
   tf.logging.info('Final test accuracy = %.1f%% (N=%d)' % (total_accuracy * 100,
                                                            set_size))
+
+
+  # ****** Modified by Yi Hu ******
+  yh_log.write('**************** Test **************** \n')
+  yh_log.write('Confusion Matrix:\n %s \n' % (total_conf_matrix))
+  yh_log.write('Final test accuracy = %.1f%% (N=%d) \n' % (total_accuracy * 100, set_size))
+
+  yh_log.close()
 
 
 if __name__ == '__main__':
@@ -514,5 +534,11 @@ if __name__ == '__main__':
       default='/tmp/jy_summary',
       help='Share the same folder with tensorflow summary. reuse that dir.'
   )
+  # ****** Modified by Yi Hu ******
+  parser.add_argument(
+      '--yihu_log',
+      type = str,
+      default = '/tmp/yihu_log.txt',
+      help = 'Where to save the summary text logs')
   FLAGS, unparsed = parser.parse_known_args()
   tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
