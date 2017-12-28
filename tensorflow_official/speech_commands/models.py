@@ -629,6 +629,56 @@ def triplet_loss(y_pred, alpha=0.2):
     ### END CODE HERE ###
 
     return loss
+def create_model_conv_shallow(fingerprint_input, model_settings, is_training):
+    if is_training:
+      dropout_prob = tf.placeholder(tf.float32, name='dropout_prob')
+    input_frequency_size = model_settings['dct_coefficient_count']
+    input_time_size = model_settings['spectrogram_length']
+    fingerprint_4d = tf.reshape(fingerprint_input,
+                                [-1, input_time_size, input_frequency_size, 1])
+    parameters = {}
+    parameters['W1'] = [20, 8, 1, 64]
+    parameters['F_strides1'] = [1,1,1,1]
+    parameters['M1'] = [1, 2, 2, 1]
+    parameters['M_strides1'] = [1, 2, 2, 1]
+
+    parameters['W2'] = [10, 4, 64, 64]
+    parameters['F_strides2'] = [1, 1, 1, 1]
+    parameters['M2'] = [1, 2, 2, 1]
+    parameters['M_strides2'] = [1, 2, 2, 1]
+
+    layer_name = 'conv_1'
+    with tf.name_scope(layer_name):
+        hidden1 = conv_layer(fingerprint_4d, parameters['W1'], parameters['F_strides1'], layer_name, act=tf.nn.relu,
+                             use_cudnn_on_gpu=False)
+        if is_training:
+            hidden1_dropout = tf.nn.dropout(hidden1, dropout_prob)
+        else:
+            hidden1_dropout = hidden1
+
+        maxpool1 = tf.nn.max_pool(hidden1_dropout, ksize=parameters['M1'], strides=parameters['M_strides1'],
+                                  padding='SAME')
+
+    # second layer
+    layer_name = 'conv_2'
+    with tf.name_scope(layer_name):
+        hidden2 = conv_layer(maxpool1, parameters['W2'], parameters['F_strides2'], layer_name, act=tf.nn.relu,
+                             use_cudnn_on_gpu=False)
+        if is_training:
+            hidden2_dropout = tf.nn.dropout(hidden2, dropout_prob)
+        else:
+            hidden2_dropout = hidden2
+    layer_name = 'fully_connected'
+    with tf.name_scope(layer_name):
+        label_count = model_settings['label_count']
+        last_layer = tf.contrib.layers.flatten(hidden2_dropout)
+
+    with tf.name_scope('logits'):
+        final_fc_logits = tf.contrib.layers.fully_connected(last_layer, label_count, activation_fn=None)
+    if is_training:
+        return final_fc_logits,  dropout_prob
+
+
 def create_model_conv_shallow_plus_triplet_loss(fingerprint_input, model_settings, is_training):
     if is_training:
       dropout_prob = tf.placeholder(tf.float32, name='dropout_prob')
