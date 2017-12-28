@@ -31,6 +31,7 @@ import numpy as np
 from six.moves import urllib
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
+import csv
 
 from tensorflow.contrib.framework.python.ops import audio_ops as contrib_audio
 from tensorflow.python.ops import io_ops
@@ -45,6 +46,12 @@ UNKNOWN_WORD_INDEX = 1
 BACKGROUND_NOISE_DIR_NAME = '_background_noise_'
 RANDOM_SEED = 59185
 
+def get_kaggle_test_file_list(submission_template_path):
+    with open(submission_template_path) as f:
+        data = csv.DictReader(f, delimiter=',')
+        file_list = [row['fname'] for row in data]
+
+    return file_list, len(file_list)
 
 def prepare_words_list(wanted_words):
   """Prepends common tokens to the custom word list.
@@ -466,6 +473,58 @@ class AudioProcessor(object):
       Number of samples in the partition.
     """
     return len(self.data_index[mode])
+
+  def get_data_kaggle_test(self, how_many, offset, model_settings, submission_template_path, kaggle_test_data_path, sess):
+    """Gather samples from the data set, applying transformations as needed.
+
+    When the mode is 'training', a random selection of samples will be returned,
+    otherwise the first N clips in the partition will be used. This ensures that
+    validation always uses the same samples, reducing noise in the metrics.
+
+    Args:
+      how_many: Desired number of samples to return. -1 means the entire
+        contents of this partition.
+      offset: Where to start when fetching deterministically.
+      model_settings: Information about the current model being trained.
+      sess: TensorFlow session that was active when processor was created.
+
+    Returns:
+      List of sample data for the transformed samples, and list of label indexes
+      also return the file names? so that you can check on them later on?
+    """
+    # Pick one of the partitions to choose samples from.
+    file_list_all,_, = get_kaggle_test_file_list(submission_template_path)
+    sample_count = max(0, min(how_many, len(file_list_all) - offset))
+    # Data, labels and file location will be populated and returned.
+    data = np.zeros((sample_count, model_settings['fingerprint_size']))
+    labels = np.zeros(sample_count)
+    file_list = [None for i in range(sample_count)]
+
+    desired_samples = model_settings['desired_samples']
+    # Use the processing graph we created earlier to repeatedly to generate the
+    # final output sample data we'll use in training.
+    time_shift_amount = 0
+    time_shift_padding = [[0, -time_shift_amount], [0, 0]]
+    time_shift_offset = [-time_shift_amount, 0]
+
+    for i in xrange(offset, offset + sample_count):
+      # Pick which audio sample to use.
+      sample_index = i
+      file_full_path = os.path.join(kaggle_test_data_path, file_list_all[sample_index])
+      input_dict = {
+          self.wav_filename_placeholder_: file_full_path,
+          self.time_shift_padding_placeholder_: time_shift_padding,
+          self.time_shift_offset_placeholder_: time_shift_offset,
+          self.background_data_placeholder_:np.zeros([desired_samples, 1]),
+          self.background_volume_placeholder_:0,
+          self.foreground_volume_placeholder_:1
+      }
+      # Run the graph to produce the output audio.
+      data[i - offset, :] = sess.run(self.mfcc_, feed_dict=input_dict).flatten()
+      labels[i - offset] = 0
+      file_list[i - offset] = file_list_all[i]
+
+    return data, labels, file_list
 
   def get_data(self, how_many, offset, model_settings, background_frequency,
                background_volume_range, time_shift, mode, sess):
