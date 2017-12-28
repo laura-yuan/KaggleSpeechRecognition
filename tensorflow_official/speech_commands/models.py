@@ -99,7 +99,8 @@ def create_model(fingerprint_input, model_settings, model_architecture,
     return create_single_fc_model(fingerprint_input, model_settings,
                                   is_training)
   elif model_architecture == 'conv':
-    return create_conv_model(fingerprint_input, model_settings, is_training)
+    return create_model_conv_replicate(fingerprint_input, model_settings, is_training)
+    # return create_conv_model(fingerprint_input, model_settings, is_training)
   elif model_architecture == 'conv_deep':
     return create_model_conv_deep(fingerprint_input, model_settings, is_training)
   elif model_architecture == 'conv_with_triplet_loss':
@@ -153,13 +154,13 @@ def conv_layer_full(X, dropout_prob, F, F_stride, M, M_stride, layer_name, is_tr
             W = tf.get_variable('weight', F, initializer=tf.contrib.layers.xavier_initializer())
             B = tf.get_variable('bias', F[3], initializer=tf.zeros_initializer())
 
-        Z = tf.add(tf.nn.conv2d(X, W, strides=F_stride, padding='VALID', use_cudnn_on_gpu=use_cudnn_on_gpu), B,
+        Z = tf.add(tf.nn.conv2d(X, W, strides=F_stride, padding='SAME', use_cudnn_on_gpu=use_cudnn_on_gpu), B,
                    name='preactivation')
 
         # batch normalization
         with tf.variable_scope(layer_name):
             if is_batch_normalization_flag:
-                Z_batch = tf.layers.batch_normalization(Z, axis = 0, center=False, scale=False, training=is_training_flag)
+                Z_batch = tf.contrib.layers.batch_norm(Z, center=False, scale=False, is_training=is_training_flag)
             else:
                 Z_batch = Z
 
@@ -679,24 +680,25 @@ def triplet_loss(y_pred, alpha=0.2):
 
     return loss
 def create_model_conv_replicate(fingerprint_input, model_settings, is_training):
-    param = [None for ii in range(2)]
-    param[0].parameters['F'] = [20, 8, 1, 64]
-    param[0].parameters['F_strides1'] = [1,1,1,1]
-    param[0].parameters['M'] = [1, 2, 2, 1]
-    param[0].parameters['M_stride'] = [1, 2, 2, 1]
-    param[0].parameters['nonlinear_act'] = tf.nn.relu
-    param[0].parameters['is_pooling_flag'] = True
-    param[0].parameters['pooling_act'] = tf.nn.max_pool
-    param[0].parameters['is_batch_normalization_flag'] = True
+    param = [{} for ii in range(2)]
 
-    param[1].parameters['F'] = [10, 4, 64, 64]
+    param[0]['F'] = [20, 8, 1, 64]
+    param[0]['F_stride'] = [1,1,1,1]
+    param[0]['M'] = [1, 2, 2, 1]
+    param[0]['M_stride'] = [1, 2, 2, 1]
+    param[0]['nonlinear_act'] = tf.nn.relu
+    param[0]['is_pooling_flag'] = True
+    param[0]['pooling_act'] = tf.nn.max_pool
+    param[0]['is_batch_normalization_flag'] = True
+
+    param[1]['F'] = [10, 4, 64, 64]
     param[1]['F_stride'] = [1, 1, 1, 1]
     param[1]['M'] = [1, 2, 2, 1]
     param[1]['M_stride'] = [1, 2, 2, 1]
-    param[1].parameters['nonlinear_act'] = tf.nn.relu
-    param[1].parameters['is_pooling_flag'] = False
-    param[1].parameters['pooling_act'] = tf.nn.max_pool
-    param[1].parameters['is_batch_normalization_flag'] = True
+    param[1]['nonlinear_act'] = tf.nn.relu
+    param[1]['is_pooling_flag'] = False
+    param[1]['pooling_act'] = tf.nn.max_pool
+    param[1]['is_batch_normalization_flag'] = True
 
 
     dropout_prob = tf.placeholder(dtype=tf.float32, name='dropout')
@@ -705,7 +707,7 @@ def create_model_conv_replicate(fingerprint_input, model_settings, is_training):
     fingerprint_4d = tf.reshape(fingerprint_input,
                                 [-1, input_time_size, input_frequency_size, 1])
     n_layer = len(param)
-    input_layer = [None for ii in range(n_layer)]
+    input_layer = [None for ii in range(n_layer + 1)]
     input_layer[0] = fingerprint_4d
 
     for ii in range(n_layer):
