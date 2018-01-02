@@ -25,7 +25,7 @@ import tensorflow as tf
 
 def prepare_model_settings(label_count, sample_rate, clip_duration_ms,
                            window_size_ms, window_stride_ms,
-                           dct_coefficient_count, mfcc_normalization_flag):
+                           dct_coefficient_count):
   """Calculates common settings needed for all models.
 
   Args:
@@ -57,7 +57,6 @@ def prepare_model_settings(label_count, sample_rate, clip_duration_ms,
       'fingerprint_size': fingerprint_size,
       'label_count': label_count,
       'sample_rate': sample_rate,
-      'mfcc_normalization_flag': mfcc_normalization_flag
   }
 
 
@@ -99,19 +98,15 @@ def create_model(fingerprint_input, model_settings, model_architecture,
     return create_single_fc_model(fingerprint_input, model_settings,
                                   is_training)
   elif model_architecture == 'conv':
-    return create_model_conv_replicate(fingerprint_input, model_settings, is_training)
-    # return create_conv_model(fingerprint_input, model_settings, is_training)
+    return create_conv_model(fingerprint_input, model_settings, is_training)
   elif model_architecture == 'conv_deep':
     return create_model_conv_deep(fingerprint_input, model_settings, is_training)
-  elif model_architecture == 'conv_with_triplet_loss':
-    return create_model_conv_shallow_plus_triplet_loss(fingerprint_input, model_settings, is_training)
   elif model_architecture == 'low_latency_conv':
     return create_low_latency_conv_model(fingerprint_input, model_settings,
                                          is_training)
   elif model_architecture == 'low_latency_svdf':
     return create_low_latency_svdf_model(fingerprint_input, model_settings,
                                          is_training, runtime_settings)
-
   else:
     raise Exception('model_architecture argument "' + model_architecture +
                     '" not recognized, should be one of "single_fc", "conv",' +
@@ -128,55 +123,6 @@ def load_variables_from_checkpoint(sess, start_checkpoint):
   saver = tf.train.Saver(tf.global_variables())
   saver.restore(sess, start_checkpoint)
 
-
-def conv_layer_full(X, dropout_prob, F, F_stride, M, M_stride, layer_name, is_training_flag=None,
-               is_batch_normalization_flag=False, is_pooling_flag=None,
-               nonlinear_act=tf.nn.relu, pooling_act=tf.nn.max_pool,
-               use_cudnn_on_gpu=True):
-    """
-    Reusable code for making a simple neural net layer --  convolution part
-    It does a matrix multiply, bias add, and then uses relu to nonlinearize.
-    It also sets up name scoping so that the resultant graph is easy to read,
-    and adds a number of summary ops.
-
-    Arguments:
-    X -- input tensor of shape (m, n_H_prev, n_W_prev, n_C_prev)
-    f -- integer, specifying the shape of the middle CONV's window [height, width, channel_prev, channel_curr]
-
-    Returns:
-    Y -- output of this layer, tensor of shape (m, n_H, n_W, n_C)
-
-    """
-    with tf.name_scope(layer_name):
-
-        # convolution
-        with tf.variable_scope(layer_name):
-            W = tf.get_variable('weight', F, initializer=tf.contrib.layers.xavier_initializer())
-            B = tf.get_variable('bias', F[3], initializer=tf.zeros_initializer())
-
-        Z = tf.add(tf.nn.conv2d(X, W, strides=F_stride, padding='SAME', use_cudnn_on_gpu=use_cudnn_on_gpu), B,
-                   name='preactivation')
-
-        # batch normalization
-        with tf.variable_scope(layer_name):
-            if is_batch_normalization_flag:
-                Z_batch = tf.contrib.layers.batch_norm(Z, center=False, scale=False, is_training=is_training_flag)
-            else:
-                Z_batch = Z
-
-        # nonlinearity
-        A = nonlinear_act(Z_batch, name='activation')
-
-        # dropout.
-        hidden_dropout = tf.nn.dropout(A, dropout_prob, name='hidden_dropout')
-
-        # pooling.
-        if is_pooling_flag:
-            maxpool = pooling_act(hidden_dropout, ksize=M, strides=M_stride, padding='SAME', name='max_pooling')
-        else:
-            maxpool = hidden_dropout
-
-    return maxpool
 
 def create_single_fc_model(fingerprint_input, model_settings, is_training):
   """Builds a model with a single hidden fully-connected layer.
@@ -620,7 +566,7 @@ def create_low_latency_svdf_model(fingerprint_input, model_settings,
   else:
     return final_fc
 
-def conv_layer(X, f, strides, layer_name, act=tf.nn.relu, use_cudnn_on_gpu=True):
+def conv_layer(X, f, strides, layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False):
     """
     Reusable code for making a simple neural net layer.
     It does a matrix multiply, bias add, and then uses relu to nonlinearize.
@@ -631,7 +577,7 @@ def conv_layer(X, f, strides, layer_name, act=tf.nn.relu, use_cudnn_on_gpu=True)
     X -- input tensor of shape (m, n_H_prev, n_W_prev, n_C_prev)
     f -- integer, specifying the shape of the middle CONV's window [20, 8, 1, 64]
     block -- string/character, used to name the layers, depending on their position in the network
-
+    
     Returns:
     Y -- output of the identity block, tensor of shape (n_H, n_W, n_C)
 
@@ -641,224 +587,14 @@ def conv_layer(X, f, strides, layer_name, act=tf.nn.relu, use_cudnn_on_gpu=True)
         B = tf.get_variable('bias', f[3], initializer= tf.zeros_initializer())
         Z = tf.nn.conv2d(X, W, strides = strides, padding = 'VALID', use_cudnn_on_gpu = use_cudnn_on_gpu, name = 'preactivation') + B
         A = act(Z, name = 'activation')
-
+        
 #     variable_summaries(W, 'weight')
 #     variable_summaries(B, 'bias')
 #     variable_summaries(Z,'preactivation')
 #     variable_summaries(A,'activation')
-
+        
     return A
-
-
-def triplet_loss(y_pred, alpha=0.2):
-    """
-    Implementation of the triplet loss as defined by formula (3)
-
-    Arguments:
-    y_true -- true labels, required when you define a loss in Keras, you don't need it in this function.
-    y_pred -- python list containing three objects:
-            anchor -- the encodings for the anchor images, of shape (None, 128)
-            positive -- the encodings for the positive images, of shape (None, 128)
-            negative -- the encodings for the negative images, of shape (None, 128)
-
-    Returns:
-    loss -- real number, value of the loss
-    """
-
-    anchor, positive, negative = y_pred[0], y_pred[1], y_pred[2]
-
-    ### START CODE HERE ### (≈ 4 lines)
-    # Step 1: Compute the (encoding) distance between the anchor and the positive, you will need to sum over axis=-1
-    pos_dist = tf.reduce_sum(tf.square(tf.subtract(anchor, positive)), axis=-1)
-    # Step 2: Compute the (encoding) distance between the anchor and the negative, you will need to sum over axis=-1
-    neg_dist = tf.reduce_sum(tf.square(tf.subtract(anchor, negative)), axis=-1)
-    # Step 3: subtract the two previous distances and add alpha.
-    basic_loss = tf.add(tf.subtract(pos_dist, neg_dist), alpha)
-    # Step 4: Take the maximum of basic_loss and 0.0. Sum over the training examples.
-    loss = tf.reduce_sum(tf.nn.relu(basic_loss))
-    ### END CODE HERE ###
-
-    return loss
-def create_model_conv_replicate(fingerprint_input, model_settings, is_training):
-    param = [{} for ii in range(2)]
-
-    param[0]['F'] = [20, 8, 1, 64]
-    param[0]['F_stride'] = [1,1,1,1]
-    param[0]['M'] = [1, 2, 2, 1]
-    param[0]['M_stride'] = [1, 2, 2, 1]
-    param[0]['nonlinear_act'] = tf.nn.relu
-    param[0]['is_pooling_flag'] = True
-    param[0]['pooling_act'] = tf.nn.max_pool
-    param[0]['is_batch_normalization_flag'] = False
-
-    param[1]['F'] = [10, 4, 64, 64]
-    param[1]['F_stride'] = [1, 1, 1, 1]
-    param[1]['M'] = [1, 2, 2, 1]
-    param[1]['M_stride'] = [1, 2, 2, 1]
-    param[1]['nonlinear_act'] = tf.nn.relu
-    param[1]['is_pooling_flag'] = False
-    param[1]['pooling_act'] = tf.nn.max_pool
-    param[1]['is_batch_normalization_flag'] = False
-
-
-    dropout_prob = tf.placeholder(dtype=tf.float32, name='dropout')
-    input_frequency_size = model_settings['dct_coefficient_count']
-    input_time_size = model_settings['spectrogram_length']
-    fingerprint_4d = tf.reshape(fingerprint_input,
-                                [-1, input_time_size, input_frequency_size, 1])
-    n_layer = len(param)
-    input_layer = [None for ii in range(n_layer + 1)]
-    input_layer[0] = fingerprint_4d
-
-    for ii in range(n_layer):
-        layer_name = 'L' + str(ii + 1)
-        parameters = param[ii]
-        F = parameters['F']
-        F_stride = parameters['F_stride']
-        M = parameters['M']
-        M_stride = parameters['M_stride']
-        nonlinear_act = parameters['nonlinear_act']
-        is_batch_normalization_flag = parameters['is_batch_normalization_flag']
-        is_pooling_flag = parameters['is_pooling_flag']
-        pooling_act = parameters['pooling_act']
-
-        input_layer[ii + 1] = conv_layer_full(input_layer[ii], dropout_prob, F, F_stride, M, M_stride, layer_name,
-                             is_training_flag=is_training,
-                             is_batch_normalization_flag=is_batch_normalization_flag, is_pooling_flag=is_pooling_flag,
-                             nonlinear_act=nonlinear_act, pooling_act=pooling_act,
-                             use_cudnn_on_gpu=True)
-    output_X = input_layer[-1]
-
-    with tf.name_scope('fully_connected'):
-        label_count = model_settings['label_count']
-        last_layer = tf.contrib.layers.flatten(output_X)
-
-    with tf.name_scope('logits'):
-        final_fc_logits = tf.contrib.layers.fully_connected(last_layer, label_count, activation_fn=tf.nn.relu)
-
-    if is_training:
-        return final_fc_logits,  dropout_prob
-    else:
-        return final_fc_logits
-
-
-
-def create_model_conv_shallow(fingerprint_input, model_settings, is_training):
-    if is_training:
-      dropout_prob = tf.placeholder(tf.float32, name='dropout_prob')
-    input_frequency_size = model_settings['dct_coefficient_count']
-    input_time_size = model_settings['spectrogram_length']
-    fingerprint_4d = tf.reshape(fingerprint_input,
-                                [-1, input_time_size, input_frequency_size, 1])
-    parameters = {}
-    parameters['W1'] = [20, 8, 1, 64]
-    parameters['F_strides1'] = [1,1,1,1]
-    parameters['M1'] = [1, 2, 2, 1]
-    parameters['M_strides1'] = [1, 2, 2, 1]
-
-    parameters['W2'] = [10, 4, 64, 64]
-    parameters['F_strides2'] = [1, 1, 1, 1]
-    parameters['M2'] = [1, 2, 2, 1]
-    parameters['M_strides2'] = [1, 2, 2, 1]
-
-    layer_name = 'conv_1'
-    with tf.name_scope(layer_name):
-        hidden1 = conv_layer(fingerprint_4d, parameters['W1'], parameters['F_strides1'], layer_name, act=tf.nn.relu,
-                             use_cudnn_on_gpu=True)
-        if is_training:
-            hidden1_dropout = tf.nn.dropout(hidden1, dropout_prob)
-        else:
-            hidden1_dropout = hidden1
-
-        maxpool1 = tf.nn.max_pool(hidden1_dropout, ksize=parameters['M1'], strides=parameters['M_strides1'],
-                                  padding='SAME')
-
-    # second layer
-    layer_name = 'conv_2'
-    with tf.name_scope(layer_name):
-        hidden2 = conv_layer(maxpool1, parameters['W2'], parameters['F_strides2'], layer_name, act=tf.nn.relu,
-                             use_cudnn_on_gpu=True)
-        if is_training:
-            hidden2_dropout = tf.nn.dropout(hidden2, dropout_prob)
-        else:
-            hidden2_dropout = hidden2
-    layer_name = 'fully_connected'
-    with tf.name_scope(layer_name):
-        label_count = model_settings['label_count']
-        last_layer = tf.contrib.layers.flatten(hidden2_dropout)
-
-    with tf.name_scope('logits'):
-        final_fc_logits = tf.contrib.layers.fully_connected(last_layer, label_count, activation_fn=None)
-    if is_training:
-        return final_fc_logits,  dropout_prob
-
-
-def create_model_conv_shallow_plus_triplet_loss(fingerprint_input, model_settings, is_training):
-    if is_training:
-      dropout_prob = tf.placeholder(tf.float32, name='dropout_prob')
-    input_frequency_size = model_settings['dct_coefficient_count']
-    input_time_size = model_settings['spectrogram_length']
-    fingerprint_4d = tf.reshape(fingerprint_input,
-                                [-1, input_time_size, input_frequency_size, 1])
-    parameters = {}
-    parameters['W1'] = [20, 8, 1, 64]
-    parameters['F_strides1'] = [1,1,1,1]
-    parameters['M1'] = [1, 2, 2, 1]
-    parameters['M_strides1'] = [1, 2, 2, 1]
-
-    parameters['W2'] = [10, 4, 64, 64]
-    parameters['F_strides2'] = [1, 1, 1, 1]
-    parameters['M2'] = [1, 2, 2, 1]
-    parameters['M_strides2'] = [1, 2, 2, 1]
-
-    parameters['W3'] = [5, 2, 64, 64]
-    parameters['F_strides3'] = [1, 1, 1, 1]
-    parameters['M3'] = [1, 2, 2, 1]
-    parameters['M_strides3'] = [1, 2, 2, 1]
-
-    encoding_len = 128
-
-    layer_name = 'conv_1'
-    with tf.name_scope(layer_name):
-        hidden1 = conv_layer(fingerprint_4d, parameters['W1'], parameters['F_strides1'], layer_name, act=tf.nn.relu,
-                             use_cudnn_on_gpu=True)
-        if is_training:
-            hidden1_dropout = tf.nn.dropout(hidden1, dropout_prob)
-        else:
-            hidden1_dropout = hidden1
-
-        maxpool1 = tf.nn.max_pool(hidden1_dropout, ksize=parameters['M1'], strides=parameters['M_strides1'],
-                                  padding='SAME')
-
-    # second layer
-    layer_name = 'conv_2'
-    with tf.name_scope(layer_name):
-        hidden2 = conv_layer(maxpool1, parameters['W2'], parameters['F_strides2'], layer_name, act=tf.nn.relu,
-                             use_cudnn_on_gpu=True)
-        if is_training:
-            hidden2_dropout = tf.nn.dropout(hidden2, dropout_prob)
-        else:
-            hidden2_dropout = hidden2
-
-    ## hidden2 is used for fully connected layer. final_fc os the logits.
-    layer_name = 'fully_connected'
-    with tf.name_scope(layer_name):
-        label_count = model_settings['label_count']
-        last_layer = tf.contrib.layers.flatten(hidden2_dropout)
-
-    with tf.name_scope('logits'):
-        final_fc_logits = tf.contrib.layers.fully_connected(last_layer, label_count, activation_fn=None)
-
-    with tf.name_scope('encoding'):
-        final_fc_encoding = tf.contrib.layers.fully_connected(last_layer, encoding_len, activation_fn=None)
-
-
-    if is_training:
-        return final_fc_logits, final_fc_encoding, dropout_prob
-    else:
-        return final_fc_logits, final_fc_encoding
-
-
+    
 def create_model_conv_deep(fingerprint_input, model_settings, is_training):
 #         parameters = model_settings['parameter']
 
@@ -896,7 +632,7 @@ def create_model_conv_deep(fingerprint_input, model_settings, is_training):
     ## first layer.
     layer_name = 'conv_1'
     with tf.name_scope(layer_name):
-        hidden1 = conv_layer(fingerprint_4d, parameters['W1'], parameters['F_strides1'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=True)
+        hidden1 = conv_layer(fingerprint_4d, parameters['W1'], parameters['F_strides1'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False)
         if is_training:
             hidden1_dropout = tf.nn.dropout(hidden1, dropout_prob)
         else:
@@ -907,7 +643,7 @@ def create_model_conv_deep(fingerprint_input, model_settings, is_training):
     # second layer
     layer_name = 'conv_2'
     with tf.name_scope(layer_name):
-        hidden2 = conv_layer(maxpool1, parameters['W2'], parameters['F_strides2'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=True)
+        hidden2 = conv_layer(maxpool1, parameters['W2'], parameters['F_strides2'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False)
         if is_training:
             hidden2_dropout = tf.nn.dropout(hidden2, dropout_prob)
         else:
@@ -918,7 +654,7 @@ def create_model_conv_deep(fingerprint_input, model_settings, is_training):
    # third layer.
     layer_name = 'conv_3'
     with tf.name_scope(layer_name):
-        hidden3 = conv_layer(maxpool2, parameters['W3'], parameters['F_strides3'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=True)
+        hidden3 = conv_layer(maxpool2, parameters['W3'], parameters['F_strides3'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False)
         if is_training:
             hidden3_dropout = tf.nn.dropout(hidden3, dropout_prob)
         else:
@@ -930,7 +666,7 @@ def create_model_conv_deep(fingerprint_input, model_settings, is_training):
     # forth layer
     layer_name = 'conv_4'
     with tf.name_scope(layer_name):
-        hidden4 = conv_layer(hidden3_dropout, parameters['W4'], parameters['F_strides4'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=True)
+        hidden4 = conv_layer(hidden3_dropout, parameters['W4'], parameters['F_strides4'], layer_name, act=tf.nn.relu, use_cudnn_on_gpu=False)
         if is_training:
             hidden4_dropout = tf.nn.dropout(hidden4, dropout_prob)
         else:
@@ -947,3 +683,9 @@ def create_model_conv_deep(fingerprint_input, model_settings, is_training):
         return final_fc, dropout_prob
     else:
         return final_fc
+
+
+
+
+
+def Sound_Verification()
