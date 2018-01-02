@@ -159,25 +159,30 @@ def main(_):
       tf.float32, [None, fingerprint_size], name='fingerprint_input')
 
   ## you have to create three encoding here.
-  logits, encoding_anchor, dropout_prob, is_training_flag = models.create_model(
+  logits, dropout_prob, is_training_flag = models.create_model(
       fingerprint_input,
       model_settings,
       FLAGS.model_architecture,
-      is_training=True,
-      encoding_name='anchor', reuse_convlayer_flag=False)
-  _, encoding_positive, _,_, = models.create_model(
-      fingerprint_input,
-      model_settings,
-      FLAGS.model_architecture,
-      is_training=True,
-      encoding_name='positive', reuse_convlayer_flag=True)
-  # name for output would be different.
-  _, encoding_negative, _, _, = models.create_model(
-      fingerprint_input,
-      model_settings,
-      FLAGS.model_architecture,
-      is_training=True,
-      encoding_name='negative',reuse_convlayer_flag=True)
+      is_training=True)
+  # logits, encoding_anchor, dropout_prob, is_training_flag = models.create_model(
+  #     fingerprint_input,
+  #     model_settings,
+  #     FLAGS.model_architecture,
+  #     is_training=True,
+  #     encoding_name='anchor', reuse_convlayer_flag=False)
+  # _, encoding_positive, _,_, = models.create_model(
+  #     fingerprint_input,
+  #     model_settings,
+  #     FLAGS.model_architecture,
+  #     is_training=True,
+  #     encoding_name='positive', reuse_convlayer_flag=True)
+  # # name for output would be different.
+  # _, encoding_negative, _, _, = models.create_model(
+  #     fingerprint_input,
+  #     model_settings,
+  #     FLAGS.model_architecture,
+  #     is_training=True,
+  #     encoding_name='negative',reuse_convlayer_flag=True)
 
 
   # Define loss and optimizer
