@@ -80,7 +80,6 @@ import tensorflow as tf
 
 import input_data
 import models
-import train_utils
 from tensorflow.python.platform import gfile
 import pickle
 
@@ -102,6 +101,16 @@ class jy_summary:
     def save(self, directory):
         with open(directory, 'wb') as f:
             pickle.dump(self, f)
+    def load(self, directory):
+        with open(directory, 'rb') as f:
+            last_point = pickle.load(f)
+        # assign value from last point to current point.
+        last_time_max_step = last_point.step
+        self.step = last_time_max_step
+        self.accurarcy[0:last_time_max_step] = last_point.accurarcy[0:last_time_max_step]
+        self.entropy[0:last_time_max_step] = last_point.entropy[0:last_time_max_step]
+        self.confusion_matrix[0:last_time_max_step] = last_point.confusion_matrix[0:last_time_max_step]
+        self.learning_rate[0:last_time_max_step] = last_point.learning_rate[0:last_time_max_step]
 
 
 def main(_):
@@ -119,7 +128,7 @@ def main(_):
   model_settings = models.prepare_model_settings(
       len(input_data.prepare_words_list(FLAGS.wanted_words.split(','))),
       FLAGS.sample_rate, FLAGS.clip_duration_ms, FLAGS.window_size_ms,
-      FLAGS.window_stride_ms, FLAGS.dct_coefficient_count, FLAGS.mfcc_normalization_flag)
+      FLAGS.window_stride_ms, FLAGS.dct_coefficient_count, FLAGS.mfcc_normalization_flag, FLAGS.batch_normalization_flag)
   audio_processor = input_data.AudioProcessor(
       FLAGS.data_url, FLAGS.data_dir, FLAGS.silence_percentage,
       FLAGS.unknown_percentage,
@@ -149,11 +158,27 @@ def main(_):
   fingerprint_input = tf.placeholder(
       tf.float32, [None, fingerprint_size], name='fingerprint_input')
 
-  logits, dropout_prob = models.create_model(
+  ## you have to create three encoding here.
+  logits, encoding_anchor, dropout_prob, is_training_flag = models.create_model(
       fingerprint_input,
       model_settings,
       FLAGS.model_architecture,
-      is_training=True)
+      is_training=True,
+      encoding_name='anchor', reuse_convlayer_flag=False)
+  _, encoding_positive, _,_, = models.create_model(
+      fingerprint_input,
+      model_settings,
+      FLAGS.model_architecture,
+      is_training=True,
+      encoding_name='positive', reuse_convlayer_flag=True)
+  # name for output would be different.
+  _, encoding_negative, _, _, = models.create_model(
+      fingerprint_input,
+      model_settings,
+      FLAGS.model_architecture,
+      is_training=True,
+      encoding_name='negative',reuse_convlayer_flag=True)
+
 
   # Define loss and optimizer
   ground_truth_input = tf.placeholder(
@@ -162,6 +187,7 @@ def main(_):
   # Optionally we can add runtime checks to spot when NaNs or other symptoms of
   # numerical errors start occurring during training.
   control_dependencies = []
+  update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
   if FLAGS.check_nans:
     checks = tf.add_check_numerics_ops()
     control_dependencies = [checks]
@@ -170,15 +196,23 @@ def main(_):
   with tf.name_scope('cross_entropy'):
     cross_entropy_mean = tf.losses.sparse_softmax_cross_entropy(
         labels=ground_truth_input, logits=logits)
-
   
-  with tf.name_scope('train'), tf.control_dependencies(control_dependencies):
+  with tf.name_scope('train_conv'), tf.control_dependencies(update_ops):
     learning_rate_input = tf.placeholder(
         tf.float32, [], name='learning_rate_input')
-#    train_step = tf.train.GradientDescentOptimizer(
-#        learning_rate_input).minimize(cross_entropy_mean)
     train_step = tf.train.AdamOptimizer(
        learning_rate_input).minimize(cross_entropy_mean)
+
+  # encoding len is hard coded as 64.
+  # encoding_len = FLAGS.encoding_len
+  # with tf.name_scope('verification'):
+  #     encoding_anchor = tf.placeholder(dtype = tf.float32, shape=[None, encoding_len], name='encoding_anchor')
+  #     encoding_positive = tf.placeholder(dtype = tf.float32, shape=[None, encoding_len], name='encoding_anchor')
+  #     encoding_negative = tf.placeholder(dtype = tf.float32, shape=[None, encoding_len], name='encoding_anchor')
+  #     triplet_loss = models.triplet_loss([encoding_anchor, encoding_positive, encoding_negative], FLAGS.similiarity_thresh_training)
+  #     train_step_encoding = tf.train.AdamOptimizer(learning_rate_input).minimize(triplet_loss, var_list=[A])
+  #     train_step_full = tf.train.AdamOptimizer(learning_rate_input).minimize(triplet_loss, var_list=[A])
+
   predicted_indices = tf.argmax(logits, 1)
   correct_prediction = tf.equal(predicted_indices, ground_truth_input)
   confusion_matrix = tf.confusion_matrix(
@@ -212,9 +246,9 @@ def main(_):
   validation_summary_jy = jy_summary(training_steps_max)
   test_summary_jy = jy_summary(1)
 
-  jy_summary_train_path = os.path.join(FLAGS.summaries_dir, FLAGS.model_architecture + 'train' + '.pickle')
-  jy_summary_validation_path = os.path.join(FLAGS.summaries_dir, FLAGS.model_architecture + 'validation' + '.pickle')
-  jy_summary_test_path = os.path.join(FLAGS.summaries_dir, FLAGS.model_architecture + 'test' + '.pickle')
+  jy_summary_train_path = os.path.join(FLAGS.summaries_dir, FLAGS.model_architecture + '_train' + '.pickle')
+  jy_summary_validation_path = os.path.join(FLAGS.summaries_dir, FLAGS.model_architecture + '_validation' + '.pickle')
+  jy_summary_test_path = os.path.join(FLAGS.summaries_dir, FLAGS.model_architecture + '_test' + '.pickle')
 
   ## start running.
   tf.global_variables_initializer().run()
@@ -224,8 +258,8 @@ def main(_):
   if FLAGS.start_checkpoint:
     models.load_variables_from_checkpoint(sess, FLAGS.start_checkpoint)
     start_step = global_step.eval(session=sess)
-    train_summary_jy = pickle.load(jy_summary_train_path)
-    validation_summary_jy = pickle.load(jy_summary_validation_path)
+    train_summary_jy.load(jy_summary_train_path)
+    validation_summary_jy.load(jy_summary_validation_path)
 
   tf.logging.info('Training from step: %d ', start_step)
 
@@ -238,8 +272,6 @@ def main(_):
       os.path.join(FLAGS.train_dir, FLAGS.model_architecture + '_labels.txt'),
       'w') as f:
     f.write('\n'.join(audio_processor.words_list))
-
-
 
 
   for training_step in xrange(start_step, training_steps_max + 1):
@@ -266,7 +298,8 @@ def main(_):
             fingerprint_input: train_fingerprints,
             ground_truth_input: train_ground_truth,
             learning_rate_input: learning_rate_value,
-            dropout_prob: 0.5
+            dropout_prob: 0.5,
+            is_training_flag: True
         })
 
     train_writer.add_summary(train_summary, training_step)
@@ -302,7 +335,8 @@ def main(_):
             feed_dict={
                 fingerprint_input: validation_fingerprints,
                 ground_truth_input: validation_ground_truth,
-                dropout_prob: 1.0
+                dropout_prob: 1.0,
+                is_training_flag: False
             })
         validation_writer.add_summary(validation_summary, training_step)
         batch_size = min(FLAGS.batch_size, set_size - i)
@@ -346,22 +380,23 @@ def main(_):
   for i in xrange(0, set_size, FLAGS.batch_size):
     test_fingerprints, test_ground_truth, _ = audio_processor.get_data(
         FLAGS.batch_size, i, model_settings, 0.0, 0.0, 0, 'testing', sess)
-        
+
     test_summary, test_accuracy, test_cross_entropy_value, test_confusion_matrix = sess.run(
         [merged_summaries, evaluation_step, cross_entropy_mean, confusion_matrix],
         feed_dict={
             fingerprint_input: test_fingerprints,
             ground_truth_input: test_ground_truth,
-            dropout_prob: 1.0
+            dropout_prob: 1.0,
+            is_training_flag: False
         })
     test_writer.add_summary(test_summary, training_step)
     batch_size = min(FLAGS.batch_size, set_size - i)
     total_accuracy += (test_accuracy * batch_size) / set_size
     total_entropy += (test_cross_entropy_value * batch_size) /set_size
     if total_conf_matrix is None:
-      total_conf_matrix = validation_confusion_matrix
+      total_conf_matrix = test_confusion_matrix
     else:
-      total_conf_matrix += validation_confusion_matrix
+      total_conf_matrix += test_confusion_matrix
 
   test_summary_jy.update(0, total_accuracy, total_entropy, total_conf_matrix,
                                  learning_rate_value)
@@ -495,7 +530,7 @@ if __name__ == '__main__':
       '--wanted_words',
       type=str,
       default='yes,no,up,down,left,right,on,off,stop,go',
-      # default='yes,no,up,down,left,rught,on,off,stop,go,bed,zero,one,two,three,four,five,six,seven,eight,nine,marvin,sheila,wow,bird,cat,dog,happy,house,',
+      # default='yes,no,up,down,left,right,on,off,stop,go,zero,one,two,three,four,five,six,seven,eight,nine,bed,marvin,sheila,wow,bird,cat,dog,happy,house',
       help='Words to use (others will be added to an unknown label)',)
   parser.add_argument(
       '--train_dir',
@@ -529,16 +564,30 @@ if __name__ == '__main__':
       help='Whether to normalize the mfcc '
   )
   parser.add_argument(
-      '--jychen_summary_name',
-      type=str,
-      default='/tmp/jy_summary',
-      help='Share the same folder with tensorflow summary. reuse that dir.'
+      '--batch_normalization_flag',
+      type=bool,
+      default=False,
+      help='Whether to do batch normalization '
   )
+  parser.add_argument(
+      '--similiarity_thresh_training',
+      type=float,
+      default = 0.5,
+      help='threshold in similiarities for verification training'
+  )
+  parser.add_argument(
+      '--encoding length',
+      type=int,
+      default=64,
+      help='len of encoding vector'
+  )
+
   # ****** Modified by Yi Hu ******
   parser.add_argument(
       '--yihu_log',
       type = str,
       default = 'E:\Juyue\\tmp\yihu_log.txt',
       help = 'Where to save the summary text logs')
+
   FLAGS, unparsed = parser.parse_known_args()
   tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
