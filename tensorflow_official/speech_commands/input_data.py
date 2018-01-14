@@ -64,11 +64,15 @@ def prepare_words_list(wanted_words):
   """
   return [SILENCE_LABEL, UNKNOWN_WORD_LABEL] + wanted_words
 
+
 def verification_utils_prepare_triplet(ground_truth_label, label_count = 12, num_of_triplets = 1000, hard_mode = False, predicted_label = None):
     # should have same example.
     ind_each_category = [np.nonzero(ll == ground_truth_label) for ll in range(label_count)]
-
-
+    num_of_samples_in_each_category = np.array([len(this_list[0]) for this_list in ind_each_category])
+    # if there are less than two samples in a certain category, this particular category is not good for anchor.
+    # if there are less than one samples in a certain category, this particular category is not good for negative sample.
+    non_feasible_anchor = np.nonzero(num_of_samples_in_each_category < 2)[0]
+    non_feasible_negative = np.nonzero(num_of_samples_in_each_category < 1)[0]
     if hard_mode :
         # if a sample is predicted to be category A, then, this sample would be negative sample for category A.
         correct_prediction = predicted_label == ground_truth_label
@@ -77,21 +81,36 @@ def verification_utils_prepare_triplet(ground_truth_label, label_count = 12, num
         category_pair_rep = np.repeat(category_pair, rep_fold, axis=0)
 
         anchor_category = category_pair_rep[:,0]
-        negative_array = category_pair_rep[:,1]
+        negative_category = category_pair_rep[:,1]
+
+        # get rid of the non feasible categories.
+        anchor_category_mask = list(map(lambda x: x not in non_feasible_anchor, anchor_category))
+        negative_category_mask = list(map(lambda x: x not in non_feasible_negative, negative_category))
+        mask = np.array([anchor_category_mask[ii] & negative_category_mask[ii] for ii in range(len(anchor_category_mask))])
+        anchor_array = anchor_category[mask]
+        negative_array = negative_category[mask]
 
     else:
         anchor_category = np.random.randint(label_count, size=num_of_triplets)
-        negative_category = [np.random.choice(list(set(list(range(label_count))) - {anchor_this_category})) for
-                             anchor_this_category in anchor_category]
-        negative = [np.random.choice(ind_each_category[anchor_this_category][0], 1, ) for anchor_this_category in
+        negative_category = np.array([np.random.choice(list(set(list(range(label_count))) - {anchor_this_category})) for
+                             anchor_this_category in anchor_category])
+
+        anchor_category_mask = list(map(lambda x: x not in non_feasible_anchor, anchor_category))
+        negative_category_mask = list(map(lambda x: x not in non_feasible_negative, negative_category))
+        mask = np.array([anchor_category_mask[ii] & negative_category_mask[ii] for ii in range(len(anchor_category_mask))])
+        anchor_array = anchor_category[mask]
+        negative_category = negative_category[mask]
+
+        negative = [np.random.choice(ind_each_category[this_category][0], 1, ) for this_category in
                     negative_category]
         negative_array = np.asarray(negative)
 
+
     anchor_and_positive = [np.random.choice(ind_each_category[anchor_this_category][0], 2, replace=False) for
-                           anchor_this_category in anchor_category]
+                           anchor_this_category in anchor_array]
     anchor_and_positive_array = np.asarray(anchor_and_positive)
 
-    triplets = np.column_stack((anchor_and_positive_array, negative_array))
+    triplets = np.column_stack([anchor_and_positive_array, negative_array])
 
 
     return triplets
@@ -473,6 +492,69 @@ class AudioProcessor(object):
       Number of samples in the partition.
     """
     return len(self.data_index[mode])
+  def get_data_all_data_one_word_util_get_sample_candidate(self, which_word):
+      search_path = os.path.join(self.data_dir, '*', '*.wav')
+      candidate = []
+      for wav_path in gfile.Glob(search_path):
+          _, word = os.path.split(os.path.dirname(wav_path))
+          word = word.lower()
+          # Treat the '_background_noise_' folder as a special case, since we expect
+          # it to contain long audio samples we mix in to improve training.
+          if word == which_word:
+              candidate.append({'label': word, 'file': wav_path})
+      return candidate
+  def get_data_all_data_one_word(self, which_word, how_many, offset, model_settings, sess):
+    """Gather samples from the data set, applying transformations as needed.
+
+    When the mode is 'training', a random selection of samples will be returned,
+    otherwise the first N clips in the partition will be used. This ensures that
+    validation always uses the same samples, reducing noise in the metrics.
+
+    Args:
+      how_many: Desired number of samples to return. -1 means the entire
+        contents of this partition.
+      offset: Where to start when fetching deterministically.
+      model_settings: Information about the current model being trained.
+      sess: TensorFlow session that was active when processor was created.
+
+    Returns:
+      List of sample data for the transformed samples, and list of label indexes
+      also return the file names? so that you can check on them later on?
+    """
+    # Pick one of the partitions to choose samples from.
+    candidates = self.get_data_all_data_one_word_util_get_sample_candidate(which_word)
+    # should also prepare for the label, as well as for the file name.
+    sample_count = max(0, min(how_many, len(candidates) - offset))
+    # Data, labels and file location will be populated and returned.
+    data = np.zeros((sample_count, model_settings['fingerprint_size']))
+    labels = np.zeros(sample_count)
+    file_list = [None for i in range(sample_count)]
+
+    desired_samples = model_settings['desired_samples']
+    # Use the processing graph we created earlier to repeatedly to generate the
+    # final output sample data we'll use in training.
+    time_shift_amount = 0
+    time_shift_padding = [[0, -time_shift_amount], [0, 0]]
+    time_shift_offset = [-time_shift_amount, 0]
+
+    for i in xrange(offset, offset + sample_count):
+      # Pick which audio sample to use.
+      sample_index = i
+      sample = candidates[sample_index]
+      input_dict = {
+          self.wav_filename_placeholder_: sample['file'],
+          self.time_shift_padding_placeholder_: time_shift_padding,
+          self.time_shift_offset_placeholder_: time_shift_offset,
+          self.background_data_placeholder_:np.zeros([desired_samples, 1]),
+          self.background_volume_placeholder_:0,
+          self.foreground_volume_placeholder_:1
+      }
+      # Run the graph to produce the output audio.
+      data[i - offset, :] = sess.run(self.mfcc_, feed_dict=input_dict).flatten()
+      labels[i - offset] = self.word_to_index[sample['label']]
+      file_list[i - offset] = sample['file']
+
+    return data, labels, file_list
 
   def get_data_kaggle_test(self, how_many, offset, model_settings, submission_template_path, kaggle_test_data_path, sess):
     """Gather samples from the data set, applying transformations as needed.

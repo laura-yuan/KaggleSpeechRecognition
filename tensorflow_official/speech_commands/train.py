@@ -91,13 +91,20 @@ class jy_summary:
         self.entropy = np.zeros(max_step)
         self.confusion_matrix = [None for ii in range(max_step)]
         self.learning_rate = np.zeros(max_step)
+        self.learning_rate_encoding = np.zeros(max_step)
         self.step = np.zeros(max_step)
-    def update(self, which_step, accuracy_value, entropy_value, confusion_matrix_value,learning_rate_value):
+        self.triplet_loss_hard = np.zeros(max_step)
+        self.triplet_loss_easy = np.zeros(max_step)
+
+    def update(self, which_step, accuracy_value, entropy_value, confusion_matrix_value, triplet_loss_hard_value, triplet_loss_easy_value, learning_rate_value, learning_rate_encoding_value):
         self.step = which_step
         self.accurarcy[which_step] = accuracy_value
         self.entropy[which_step] = entropy_value
         self.confusion_matrix[which_step] = confusion_matrix_value
         self.learning_rate[which_step] = learning_rate_value
+        self.learning_rate_encoding[which_step] = learning_rate_encoding_value
+        self.triplet_loss_easy[which_step] = triplet_loss_easy_value
+        self.triplet_loss_hard[which_step] = triplet_loss_hard_value
     def save(self, directory):
         with open(directory, 'wb') as f:
             pickle.dump(self, f)
@@ -111,7 +118,9 @@ class jy_summary:
         self.entropy[0:last_time_max_step] = last_point.entropy[0:last_time_max_step]
         self.confusion_matrix[0:last_time_max_step] = last_point.confusion_matrix[0:last_time_max_step]
         self.learning_rate[0:last_time_max_step] = last_point.learning_rate[0:last_time_max_step]
-
+        self.learning_rate_encoding[0:last_time_max_step] = last_point.learning_rate_encoding[0:last_time_max_step]
+        self.triplet_loss_easy[0:last_time_max_step] = last_point.triplet_loss_easy[0:last_time_max_step]
+        self.triplet_loss_hard[0:last_time_max_step] = last_point.triplet_loss_hard[0:last_time_max_step]
 
 def main(_):
   # ****** Modified by Yi Hu ******
@@ -155,35 +164,14 @@ def main(_):
         'lists, but are %d and %d long instead' % (len(training_steps_list),
                                                    len(learning_rates_list)))
 
-  fingerprint_input = tf.placeholder(
-      tf.float32, [None, fingerprint_size], name='fingerprint_input')
+  fingerprint_anchor = tf.placeholder(
+      tf.float32, [None, fingerprint_size], name='fingerprint_anchor')
+  fingerprint_positive = tf.placeholder(
+      tf.float32, [None, fingerprint_size], name='fingerprint_positive')
+  fingerprint_negative = tf.placeholder(
+      tf.float32, [None, fingerprint_size], name='fingerprint_negative')
 
-  ## you have to create three encoding here.
-  logits, dropout_prob, is_training_flag = models.create_model(
-      fingerprint_input,
-      model_settings,
-      FLAGS.model_architecture,
-      is_training=True)
-  # logits, encoding_anchor, dropout_prob, is_training_flag = models.create_model(
-  #     fingerprint_input,
-  #     model_settings,
-  #     FLAGS.model_architecture,
-  #     is_training=True,
-  #     encoding_name='anchor', reuse_convlayer_flag=False)
-  # _, encoding_positive, _,_, = models.create_model(
-  #     fingerprint_input,
-  #     model_settings,
-  #     FLAGS.model_architecture,
-  #     is_training=True,
-  #     encoding_name='positive', reuse_convlayer_flag=True)
-  # # name for output would be different.
-  # _, encoding_negative, _, _, = models.create_model(
-  #     fingerprint_input,
-  #     model_settings,
-  #     FLAGS.model_architecture,
-  #     is_training=True,
-  #     encoding_name='negative',reuse_convlayer_flag=True)
-
+  logits, loss_triplet, dropout_prob, is_training_flag, trainable_encoding_var_list = models.create_verification_model([fingerprint_anchor , fingerprint_positive, fingerprint_negative], model_settings)
 
   # Define loss and optimizer
   ground_truth_input = tf.placeholder(
@@ -191,6 +179,8 @@ def main(_):
 
   # Optionally we can add runtime checks to spot when NaNs or other symptoms of
   # numerical errors start occurring during training.
+
+  # bactch normalization will use update_ops.
   control_dependencies = []
   update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
   if FLAGS.check_nans:
@@ -201,44 +191,45 @@ def main(_):
   with tf.name_scope('cross_entropy'):
     cross_entropy_mean = tf.losses.sparse_softmax_cross_entropy(
         labels=ground_truth_input, logits=logits)
-  
-  with tf.name_scope('train_conv'), tf.control_dependencies(update_ops):
-    learning_rate_input = tf.placeholder(
-        tf.float32, [], name='learning_rate_input')
-    train_step = tf.train.AdamOptimizer(
-       learning_rate_input).minimize(cross_entropy_mean)
-
-  # encoding len is hard coded as 64.
-  # encoding_len = FLAGS.encoding_len
-  # with tf.name_scope('verification'):
-  #     encoding_anchor = tf.placeholder(dtype = tf.float32, shape=[None, encoding_len], name='encoding_anchor')
-  #     encoding_positive = tf.placeholder(dtype = tf.float32, shape=[None, encoding_len], name='encoding_anchor')
-  #     encoding_negative = tf.placeholder(dtype = tf.float32, shape=[None, encoding_len], name='encoding_anchor')
-  #     triplet_loss = models.triplet_loss([encoding_anchor, encoding_positive, encoding_negative], FLAGS.similiarity_thresh_training)
-  #     train_step_encoding = tf.train.AdamOptimizer(learning_rate_input).minimize(triplet_loss, var_list=[A])
-  #     train_step_full = tf.train.AdamOptimizer(learning_rate_input).minimize(triplet_loss, var_list=[A])
 
   predicted_indices = tf.argmax(logits, 1)
   correct_prediction = tf.equal(predicted_indices, ground_truth_input)
   confusion_matrix = tf.confusion_matrix(
       ground_truth_input, predicted_indices, num_classes=label_count)
   evaluation_step = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-    
 
-
+  # define learning rate
   global_step = tf.train.get_or_create_global_step()
   increment_global_step = tf.assign(global_step, global_step + 1)
 
+  learning_rate = tf.train.exponential_decay(FLAGS.starter_learning_rate, global_step,
+                                             FLAGS.learning_rate_decay_steps, FLAGS.learning_rate_decay_rate, staircase=True)
+  learning_rate_encoding = tf.train.exponential_decay(FLAGS.starter_learning_rate_encoding, global_step,
+                                             FLAGS.learning_rate_decay_steps, FLAGS.learning_rate_decay_rate,
+                                             staircase=True)
+
+  # define three train step
+  with tf.name_scope('train_conv'), tf.control_dependencies(update_ops):
+    train_step_conv = tf.train.AdamOptimizer(
+        learning_rate).minimize(cross_entropy_mean)
+
+  with tf.name_scope('train_encoding_layer_only'):
+    train_step_encoding_only = tf.train.AdamOptimizer(
+        learning_rate_encoding).minimize(loss_triplet, var_list=trainable_encoding_var_list)
+
+  with tf.name_scope('train_encoding'):
+      train_step_encoding = tf.train.AdamOptimizer(
+        learning_rate_encoding).minimize(loss_triplet)
+
   saver = tf.train.Saver(tf.global_variables())
 
-  # Merge all the summaries and write them out to /tmp/retrain_logs (by default)
-    
-  # result for training, validation and testing. write to tensorflow. write something similar.
+
+  # result for training, validation and testing. write to tensorflow.
   tf.summary.scalar('cross_entropy', cross_entropy_mean)
   tf.summary.scalar('accuracy', evaluation_step)
   confusion_matrix_save = tf.expand_dims(tf.expand_dims(tf.cast(confusion_matrix, tf.float32), 0), 3)
   tf.summary.image('confusion_matrix', confusion_matrix_save)
-
+  # Merge all the summaries and write them out to /tmp/retrain_logs (by default)
   merged_summaries = tf.summary.merge_all()
   train_writer = tf.summary.FileWriter(FLAGS.summaries_dir + '/train',
                                        sess.graph)
@@ -280,13 +271,6 @@ def main(_):
 
 
   for training_step in xrange(start_step, training_steps_max + 1):
-    # Figure out what the current learning rate is.
-    training_steps_sum = 0
-    for i in range(len(training_steps_list)):
-      training_steps_sum += training_steps_list[i]
-      if training_step <= training_steps_sum:
-        learning_rate_value = learning_rates_list[i]
-        break
     # Pull the audio samples we'll use for training.
     train_fingerprints, train_ground_truth, _ = audio_processor.get_data(
         FLAGS.batch_size, 0, model_settings, FLAGS.background_frequency,
@@ -294,35 +278,54 @@ def main(_):
 
 
     # Run the graph with this batch of training data.
-    train_summary, train_accuracy, train_cross_entropy_value, train_confusion_matrix, predicted_value, _, _ = sess.run(
+    train_summary, train_accuracy, train_cross_entropy_value, train_confusion_matrix, predicted_value, learning_rate_value,_, _ = sess.run(
         [
-            merged_summaries, evaluation_step, cross_entropy_mean, confusion_matrix, predicted_indices, train_step,
-                increment_global_step
+            merged_summaries, evaluation_step, cross_entropy_mean, confusion_matrix, predicted_indices, learning_rate,
+            train_step_conv,increment_global_step
         ],
         feed_dict={
-            fingerprint_input: train_fingerprints,
-            ground_truth_input: train_ground_truth,
-            learning_rate_input: learning_rate_value,
+            fingerprint_anchor:   train_fingerprints,
+            fingerprint_positive: train_fingerprints,
+            fingerprint_negative: train_fingerprints,
+            ground_truth_input:   train_ground_truth,
             dropout_prob: 0.5,
             is_training_flag: True
         })
 
-    train_writer.add_summary(train_summary, training_step)
-    # you should write your own function to store the basic training information.
-    train_summary_jy.update(training_step - 1, train_accuracy, train_cross_entropy_value, train_confusion_matrix, learning_rate_value)
+    # Organize the audio samples to train the encoding.
 
-    tf.logging.info('Step #%d: rate %f, accuracy %.1f%%, cross entropy %f' %
+    easy_triplets = input_data.verification_utils_prepare_triplet(train_ground_truth, label_count= model_settings['label_count'], hard_mode=False,
+                                                                  num_of_triplets=FLAGS.batch_size)
+    hard_triplets = input_data.verification_utils_prepare_triplet(train_ground_truth, label_count= model_settings['label_count'], hard_mode=True,
+                                                                  num_of_triplets=FLAGS.batch_size,
+                                                                  predicted_label=predicted_value)
+    # train only the encoding layer.
+    encoding_only_feed_dict = {fingerprint_anchor: train_fingerprints[easy_triplets[:, 0]],
+                               fingerprint_positive: train_fingerprints[easy_triplets[:, 1]],
+                               fingerprint_negative: train_fingerprints[easy_triplets[:, 2]],
+                               dropout_prob: 0.5,
+                               is_training_flag: True
+                               }
+    triplet_loss_easy_value, _,_ = sess.run([loss_triplet, learning_rate_encoding, train_step_encoding_only], encoding_only_feed_dict)
+    # train the full network
+    encoding_feed_dict = {fingerprint_anchor: train_fingerprints[hard_triplets[:, 0]],
+                          fingerprint_positive: train_fingerprints[hard_triplets[:, 1]],
+                          fingerprint_negative: train_fingerprints[hard_triplets[:, 2]],
+                          dropout_prob: 0.5,
+                          is_training_flag: True
+                          }
+    triplet_loss_hard_value, learning_rate_encoding_value, _ = sess.run([loss_triplet,learning_rate_encoding, train_step_encoding], encoding_feed_dict )
+
+    # record the training process.
+    train_summary_jy.update(training_step - 1, train_accuracy, train_cross_entropy_value, train_confusion_matrix,
+                            triplet_loss_easy_value, triplet_loss_hard_value, learning_rate_value, learning_rate_encoding_value)
+    train_writer.add_summary(train_summary, training_step)
+    tf.logging.info('Step #%d: rate %f, accuracy %.1f%%, cross entropy %f, triplet_loss %0.1f, lr %f, lr_en %f' %
                     (training_step, learning_rate_value, train_accuracy * 100,
-                     train_cross_entropy_value))
+                     train_cross_entropy_value, triplet_loss_easy_value, learning_rate_value, learning_rate_encoding_value))
     is_last_step = (training_step == training_steps_max)
     
-    # # create training set for encoding session.
-    # easy_triplets = input_data.verification_utils_prepare_triplet(train_ground_truth, hard_mode=False, num_of_triplets=FLAGS.batch_size)
-    # hard_triplets = input_data.verification_utils_prepare_triplet(train_ground_truth, hard_mode=True, num_of_triplets=FLAGS.batch_size, predicted_label=predicted_value)
 
-    # define encoding.
-
-    #
     ## validation. inside of training loop
     if (training_step % FLAGS.eval_step_interval) == 0 or is_last_step:
       set_size = audio_processor.set_size('validation')
@@ -338,11 +341,13 @@ def main(_):
         validation_summary, validation_accuracy, validation_cross_entropy_value, validation_confusion_matrix = sess.run(
             [merged_summaries, evaluation_step, cross_entropy_mean,confusion_matrix],
             feed_dict={
-                fingerprint_input: validation_fingerprints,
+                fingerprint_anchor: validation_fingerprints,
                 ground_truth_input: validation_ground_truth,
                 dropout_prob: 1.0,
                 is_training_flag: False
             })
+        # how could you use the model to do testing? test the similarity?
+
         validation_writer.add_summary(validation_summary, training_step)
         batch_size = min(FLAGS.batch_size, set_size - i)
         total_accuracy += (validation_accuracy * batch_size) / set_size
@@ -356,7 +361,11 @@ def main(_):
                       (training_step, total_accuracy * 100, set_size))
 
       validation_summary_jy.update(training_step - 1, total_accuracy, total_entropy, total_conf_matrix,
-                              learning_rate_value)
+                              0,0,0,0)
+
+      # Save the jy_summary as well.
+      train_summary_jy.save(jy_summary_train_path)
+      validation_summary_jy.save(jy_summary_validation_path)
 
       # ****** Modified by Yi Hu ******
       yh_log.write('**************** Validation **************** \n')
@@ -373,9 +382,7 @@ def main(_):
                                      FLAGS.model_architecture + '.ckpt')
       tf.logging.info('Saving to "%s-%d"', checkpoint_path, training_step)
       saver.save(sess, checkpoint_path, global_step=training_step)
-    # Save the jy_summary as well.
-      train_summary_jy.save(jy_summary_train_path)
-      validation_summary_jy.save(jy_summary_validation_path)
+
 
   set_size = audio_processor.set_size('testing')
   tf.logging.info('set_size=%d', set_size)
@@ -389,7 +396,7 @@ def main(_):
     test_summary, test_accuracy, test_cross_entropy_value, test_confusion_matrix = sess.run(
         [merged_summaries, evaluation_step, cross_entropy_mean, confusion_matrix],
         feed_dict={
-            fingerprint_input: test_fingerprints,
+            fingerprint_anchor: test_fingerprints,
             ground_truth_input: test_ground_truth,
             dropout_prob: 1.0,
             is_training_flag: False
@@ -404,7 +411,7 @@ def main(_):
       total_conf_matrix += test_confusion_matrix
 
   test_summary_jy.update(0, total_accuracy, total_entropy, total_conf_matrix,
-                                 learning_rate_value)
+                                 0,0,0,0)
   test_summary_jy.save(jy_summary_test_path)
 
   tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
@@ -585,6 +592,31 @@ if __name__ == '__main__':
       type=int,
       default=64,
       help='len of encoding vector'
+  )
+
+  parser.add_argument(
+      '--starter_learning_rate',
+      type = float,
+      default= 0.001,
+      help='start learning rate'
+  )
+  parser.add_argument(
+      '--starter_learning_rate_encoding',
+      type=float,
+      default=0.0001,
+      help='start learning rate for encoding layer'
+  )
+  parser.add_argument(
+      '--learning_rate_decay_steps',
+      type=int,
+      default=150,
+      help='every decay_steps, the learning rate is decreased decay_rate'
+  )
+  parser.add_argument(
+      '--learning_rate_decay_rate',
+      type=float,
+      default=0.6,
+      help='every decay_steps, the learning rate is decreased decay_rate'
   )
 
   # ****** Modified by Yi Hu ******

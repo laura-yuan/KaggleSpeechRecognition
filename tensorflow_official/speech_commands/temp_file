@@ -1,0 +1,12 @@
+curr = tf.get_default_graph()
+trainable_variables = curr.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+trainable_variable_value = sess.run(trainable_variables)
+
+print('W1 %f' % trainable_variable_value[0][0,0,0,0])
+print('B1 %f' % trainable_variable_value[1][0])
+print('W2 %f' % trainable_variable_value[2][0,0,0,0])
+print('B2 %f' % trainable_variable_value[3][0])
+print('W_fully_connected %f' %  trainable_variable_value[4][0,0])
+print('B_fully_connected %f' %  trainable_variable_value[5][0])
+print('W_encoding %f' %  trainable_variable_value[6][0,0])
+print('W_encoding  %f' %  trainable_variable_value[7][0])

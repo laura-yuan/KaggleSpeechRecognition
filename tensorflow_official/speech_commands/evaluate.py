@@ -217,7 +217,9 @@ def main(_):
             evaluate_utils.record_wrong_predicted_file(logpath, wav_path_wrong, wav_prediction_wrong_words,
                                                        wav_ground_truth=wav_ground_truth_wrong_words, write_label_flag=True, append_flag=append_flag)
 
-            # accuracy list when the word list is short. give it a try.
+            # when there are 28 catergoriese, you should put all predicted label. where >12 into 2 , as well as for the ground truth input, and calculate accuracy as well.
+            predicted_label_short_word_list = []
+            ground_truth_word_list =
 
         tf.logging.info('Confusion Matrix:\n %s' % (total_conf_matrix))
         tf.logging.info('validatation accuracy = %.1f%% (N=%d)' % (total_accuracy * 100,
